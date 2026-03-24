@@ -1,0 +1,29 @@
+services:
+  frontend:
+    build: ./frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - go-service
+    networks:
+      - app-network
+
+  go-service:
+    build: ./backend/go
+    ports:
+      - "8080:8080"
+    depends_on:
+      - python-service
+    networks:
+      - app-network
+
+  python-service:
+    build: ./backend/python
+    ports:
+      - "8000:8000"
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge

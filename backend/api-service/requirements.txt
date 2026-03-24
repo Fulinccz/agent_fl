@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+pydantic
+python-multipart
+openai
+requests
+transformers
+torch
+peft
+bitsandbytes

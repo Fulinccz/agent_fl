@@ -1,0 +1,55 @@
+﻿# Dependencies
+frontend/node_modules/
+backend/api-service/venv/
+backend/api-gateway/vendor/
+
+# Build outputs
+build/
+dist/
+*.exe
+*.dll
+*.so
+*.dylib
+go.sum
+
+# Environment files
+.env
+*.env.local
+*.env.development.local
+*.env.test.local
+*.env.production.local
+
+# Log files
+*.log
+
+# Model-related directories
+ai/models/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Editor directories and files
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Python files
+__pycache__/
+*.py[cod]
+*.class
+
+# Go files
+/vendor/
+/bin/
+/obj/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp

@@ -1,0 +1,6 @@
+server:
+  port: "8080"
+
+python:
+  baseURL: "http://python-service:8000"
+  agentPath: "/api/agent"
