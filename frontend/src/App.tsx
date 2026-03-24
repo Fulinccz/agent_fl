@@ -19,7 +19,9 @@ function App() {
     e.preventDefault();
     setIsLoading(true);
     try {
-      const res = await fetch('http://localhost:8080/api/agent', {
+      // 通过 nginx 代理到 go-service（docker 容器内推荐）
+      const baseUrl = process.env.REACT_APP_API_URL || '/api';
+      const res = await fetch(`${baseUrl}/agent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query })

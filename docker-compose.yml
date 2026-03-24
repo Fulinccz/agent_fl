@@ -9,7 +9,7 @@ services:
       - app-network
 
   go-service:
-    build: ./backend/go
+    build: ./backend/api-gateway
     ports:
       - "8080:8080"
     depends_on:
@@ -18,7 +18,9 @@ services:
       - app-network
 
   python-service:
-    build: ./backend/python
+    build: ./backend/api-service
+    volumes:
+      - ./ai/models:/app/ai/models
     ports:
       - "8000:8000"
     networks:
