@@ -20,16 +20,33 @@ function App() {
     setIsLoading(true);
     try {
       // 通过 nginx 代理到 go-service（docker 容器内推荐）
-      const baseUrl = process.env.REACT_APP_API_URL || '/api';
+      // Vite 前端运行时应使用 import.meta.env（避免浏览器报 process is not defined）
+      const baseUrl = (import.meta.env.VITE_API_URL as string) || '/api';
       const res = await fetch(`${baseUrl}/agent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query })
       });
-      const data = await res.json();
+
+      const text = await res.text();
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${text || '<empty response>'}`);
+      }
+
+      let data;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch (err) {
+        throw new Error(`Invalid JSON response: ${text}`);
+      }
+
+      if (!data || typeof data.response !== 'string') {
+        throw new Error(`Unexpected response format: ${text}`);
+      }
+
       setResponse(data.response);
     } catch (error) {
-      setResponse('Error: ' + error);
+      setResponse('Error: ' + (error instanceof Error ? error.message : String(error)));
     } finally {
       setIsLoading(false);
     }

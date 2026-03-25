@@ -27,12 +27,12 @@ func LoadConfig() (*Config, error) {
 	viper.AddConfigPath("../config")
 	viper.AddConfigPath("../../config")
 
-	// 设置默认值
+	// 设置默认值（本地开发默认 localhost，Docker 环境可通过环境变量覆盖）
 	viper.SetDefault("server.port", "8080")
-	viper.SetDefault("python.baseURL", "http://python-service:8000")
+	viper.SetDefault("python.baseURL", "http://localhost:8000")
 	viper.SetDefault("python.agentPath", "/api/agent")
 
-	// 从环境变量读取
+	// 从环境变量读取（PYTHON_BASEURL / PYTHON_AGENTPATH 等）
 	viper.AutomaticEnv()
 
 	// 尝试读取配置文件
