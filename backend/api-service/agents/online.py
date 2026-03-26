@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from logger import get_logger
 import os
 from typing import Optional
 
 from .base import BaseAgent
+
+logger = get_logger(__name__)
 
 
 class OpenAIAgent(BaseAgent):
@@ -24,9 +27,11 @@ class OpenAIAgent(BaseAgent):
 
     def generate(self, prompt: str, **kwargs) -> str:
         if self._openai is None:
+            logger.error("OpenAI SDK 未安装，无法生成文本")
             return "[openai-sdk-not-installed] " + prompt
 
         if not self.api_key:
+            logger.error("OpenAI API Key 未设置")
             return "[openai-api-key-not-set] " + prompt
 
         resp = self._openai.ChatCompletion.create(

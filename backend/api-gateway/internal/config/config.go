@@ -1,6 +1,7 @@
 package config
 
 import (
+	"agent-api/pkg/logger"
 	"fmt"
 
 	"github.com/spf13/viper"
@@ -41,7 +42,7 @@ func LoadConfig() (*Config, error) {
 			return nil, fmt.Errorf("failed to read config file: %w", err)
 		}
 		// 配置文件不存在时，使用默认值
-		fmt.Println("Config file not found, using default values")
+		logger.GetLogger().Info("Config file not found, using default values")
 	}
 
 	var config Config

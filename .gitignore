@@ -23,7 +23,7 @@ go.sum
 *.log
 
 # Model-related directories
-ai/models/
+ai/
 
 # System files
 .DS_Store

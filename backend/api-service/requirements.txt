@@ -7,4 +7,6 @@ requests
 transformers
 torch
 peft
+datasets
 bitsandbytes
+python-dotenv

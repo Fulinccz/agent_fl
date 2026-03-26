@@ -3,7 +3,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 
 	"agent-api/internal/config"
 	"agent-api/internal/router"
@@ -15,7 +14,7 @@ func main() {
 	logger.Init(cfg.Level, logger.GetOutput(cfg.Output), cfg.Format)
 	appConfig, err := config.LoadConfig()
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		logger.GetLogger().Fatalf("Failed to load config: %v", err)
 		return
 	}
 
@@ -24,8 +23,8 @@ func main() {
 
 	// 启动服务器
 	serverPort := fmt.Sprintf(":%s", appConfig.Server.Port)
-	log.Printf("Server running on %s", serverPort)
+	logger.GetLogger().Infof("Server running on %s", serverPort)
 	if err := r.Run(serverPort); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+		logger.GetLogger().Fatalf("Failed to start server: %v", err)
 	}
 }

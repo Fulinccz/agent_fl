@@ -1,8 +1,11 @@
 from __future__ import annotations
+from logger import get_logger
 import torch
 from .base import BaseAgent
 from pathlib import Path
 from typing import Optional, List
+
+logger = get_logger(__name__)
 
 try:
     from transformers import pipeline
@@ -44,9 +47,7 @@ class LocalAgent(BaseAgent):
                     "text-generation",
                     model=self.local_model_path,
                     tokenizer=self.local_model_path,
-                    device_map="auto",
                     trust_remote_code=True,
-                    torch_dtype="auto",
                     device_map="cpu",               # CPU稳定运行
                     torch_dtype=torch.bfloat16,     # 无损精度，速度大幅提升
                     low_cpu_mem_usage=True,         # CPU专用优化
@@ -55,9 +56,10 @@ class LocalAgent(BaseAgent):
                     self.transformers_pipeline.model,
                     mode="max-autotune"
                 )
-                print(f"Using local transformers model: {self.local_model_path}")
+                logger.info("Using local transformers model: %s", self.local_model_path)
             except Exception as e:
-                raise RuntimeError(f"Failed to initialize transformers local model ({self.local_model_path}): {e}")
+                logger.exception("Failed to initialize transformers local model: %s", self.local_model_path)
+                raise RuntimeError(f"Failed to initialize transformers local model ({self.local_model_path}): {e}") from e
         else:
             raise FileNotFoundError(
                 f"本地模型路径不存在: {model_path}. 仅支持 ai/models 目录下模型。"

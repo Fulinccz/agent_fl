@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from logger import get_logger
 from typing import Optional
 from pathlib import Path
 
 from .local import LocalAgent
 from .online import OpenAIAgent
+
+logger = get_logger(__name__)
 
 
 def _default_local_model():
@@ -23,8 +26,10 @@ def get_agent(provider: str = "local", model: Optional[str] = None):
 
     normalized = (provider or "").strip().lower()
     if normalized in {"online", "openai", "cloud"}:
+        logger.info("Using OpenAI agent provider (model=%s)", model or "gpt-3.5-turbo")
         return OpenAIAgent(model=model or "gpt-3.5-turbo")
 
     chosen_model = model or _default_local_model()
+    logger.info("Using Local agent provider (model=%s)", chosen_model)
     return LocalAgent(model_name=chosen_model)
 
