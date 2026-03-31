@@ -24,5 +24,14 @@ async def shutdown_event():
 
 if __name__ == "__main__":
     import uvicorn
+    import torch
 
+    def set_torch_threads():
+        try:
+            torch.set_num_threads(torch.get_num_threads())
+            torch.set_num_interop_threads(torch.get_num_threads())
+        except Exception as e:
+            logger.warning(f"PyTorch线程数设置失败: {e}")
+
+    set_torch_threads()
     uvicorn.run(app, host="0.0.0.0", port=8000)

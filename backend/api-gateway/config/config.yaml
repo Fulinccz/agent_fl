@@ -5,3 +5,4 @@ python:
   # 本地开发默认 localhost。容器模式下可通过环境变量覆盖为 python-service
   baseURL: "http://localhost:8000"
   agentPath: "/api/agent"
+  agentStreamPath: "/api/agent/stream"

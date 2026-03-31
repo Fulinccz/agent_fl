@@ -18,33 +18,23 @@ function App() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+    setResponse('');
     try {
-      // 通过 nginx 代理到 go-service（docker 容器内推荐）
-      // Vite 前端运行时应使用 import.meta.env（避免浏览器报 process is not defined）
       const baseUrl = (import.meta.env.VITE_API_URL as string) || '/api';
-      const res = await fetch(`${baseUrl}/agent`, {
+      const res = await fetch(`${baseUrl}/agent/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query })
       });
-
-      const text = await res.text();
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${text || '<empty response>'}`);
+      if (!res.body) throw new Error('No response body');
+      const reader = res.body.getReader();
+      let result = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        result += new TextDecoder().decode(value);
+        setResponse(result); // 实时渲染
       }
-
-      let data;
-      try {
-        data = text ? JSON.parse(text) : null;
-      } catch (err) {
-        throw new Error(`Invalid JSON response: ${text}`);
-      }
-
-      if (!data || typeof data.response !== 'string') {
-        throw new Error(`Unexpected response format: ${text}`);
-      }
-
-      setResponse(data.response);
     } catch (error) {
       setResponse('Error: ' + (error instanceof Error ? error.message : String(error)));
     } finally {

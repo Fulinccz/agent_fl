@@ -41,8 +41,6 @@ class LocalAgent(BaseAgent):
                 raise RuntimeError("transformers 库未安装，请安装 transformers 并重试")
 
             try:
-                torch.set_num_threads(torch.get_num_threads())  # 自动用满CPU核心
-                torch.set_num_interop_threads(torch.get_num_threads())
                 self.transformers_pipeline = pipeline(
                     "text-generation",
                     model=self.local_model_path,
@@ -73,16 +71,7 @@ class LocalAgent(BaseAgent):
             raise RuntimeError("本地模型尚未加载，无法执行生成。")
 
         try:
-            # 避免传递不受支持或跟 generation_config 冲突的参数
-            gen_kwargs = {
-                "max_new_tokens": kwargs.get("max_new_tokens", 256),
-                "do_sample": kwargs.get("do_sample", False),
-            }
-            # 若用户传入了 max_length，优先 max_new_tokens；避免 transformers 同时设置后警告
-            if "max_length" in kwargs:
-                gen_kwargs.pop("max_length", None)
-
-            outputs = self.transformers_pipeline(prompt, **gen_kwargs)
+            outputs = self.transformers_pipeline(prompt)
             if outputs and isinstance(outputs, list) and "generated_text" in outputs[0]:
                 return outputs[0]["generated_text"]
             return str(outputs)

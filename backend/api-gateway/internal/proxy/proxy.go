@@ -1,15 +1,62 @@
-// internal/proxy/python_proxy.go
 package proxy
 
 import (
+	"agent-api/internal/config"
 	"fmt"
 	"io"
 	"net/http"
 
-	"agent-api/internal/config"
-
 	"github.com/gin-gonic/gin"
 )
+
+// PythonStreamProxy 返回流式代理到Python服务的中间件
+func PythonStreamProxy() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		pythonURL := fmt.Sprintf("%s%s", appConfig.Python.BaseURL, appConfig.Python.AgentStreamPath)
+		proxyReq, err := http.NewRequest(c.Request.Method, pythonURL, c.Request.Body)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error":   "Failed to create proxy request",
+				"details": err.Error(),
+			})
+			return
+		}
+		for key, values := range c.Request.Header {
+			for _, value := range values {
+				proxyReq.Header.Add(key, value)
+			}
+		}
+		client := &http.Client{}
+		resp, err := client.Do(proxyReq)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error":      "Failed to connect to Python service",
+				"details":    err.Error(),
+				"python_url": pythonURL,
+			})
+			return
+		}
+		defer resp.Body.Close()
+		for key, values := range resp.Header {
+			for _, value := range values {
+				c.Header(key, value)
+			}
+		}
+		c.Status(resp.StatusCode)
+		// 关键：流式复制响应体
+		buf := make([]byte, 4096)
+		for {
+			n, err := resp.Body.Read(buf)
+			if n > 0 {
+				c.Writer.Write(buf[:n])
+				c.Writer.Flush()
+			}
+			if err != nil {
+				break
+			}
+		}
+	}
+}
 
 // 全局配置变量
 var appConfig *config.Config

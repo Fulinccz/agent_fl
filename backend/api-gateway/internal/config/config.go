@@ -17,8 +17,9 @@ type ServerConfig struct {
 }
 
 type PythonConfig struct {
-	BaseURL   string
-	AgentPath string
+	BaseURL         string
+	AgentPath       string
+	AgentStreamPath string
 }
 
 func LoadConfig() (*Config, error) {
@@ -32,6 +33,7 @@ func LoadConfig() (*Config, error) {
 	viper.SetDefault("server.port", "8080")
 	viper.SetDefault("python.baseURL", "http://localhost:8000")
 	viper.SetDefault("python.agentPath", "/api/agent")
+	viper.SetDefault("python.agentStreamPath", "/api/agent/stream")
 
 	// 从环境变量读取（PYTHON_BASEURL / PYTHON_AGENTPATH 等）
 	viper.AutomaticEnv()

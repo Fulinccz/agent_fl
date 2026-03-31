@@ -39,6 +39,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 	api := r.Group("/api")
 	{
 		api.POST("/agent", proxy.PythonProxy())
+		api.POST("/agent/stream", proxy.PythonStreamProxy())
 	}
 
 	return r
