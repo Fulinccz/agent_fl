@@ -16,7 +16,7 @@ except ImportError:
 class LocalAgent(BaseAgent):
     """A local-only model adapter using transformers from ai/models."""
 
-    def __init__(self, model_name: str = "Qwen3___5-4B"):
+    def __init__(self, model_name: str = "model_serving"):
         """Initialize local model adapter.
 
         model_name can be:
@@ -49,8 +49,7 @@ class LocalAgent(BaseAgent):
                     tokenizer=self.local_model_path,
                     trust_remote_code=True,
                     device_map="cpu",               # CPU稳定运行
-                    torch_dtype=torch.bfloat16,     # 无损精度，速度大幅提升
-                    low_cpu_mem_usage=True,         # CPU专用优化
+                    dtype=torch.bfloat16,           # 无损精度，速度大幅提升（新版参数名）
                 )
                 self.transformers_pipeline.model = torch.compile(
                     self.transformers_pipeline.model,
@@ -78,8 +77,6 @@ class LocalAgent(BaseAgent):
             gen_kwargs = {
                 "max_new_tokens": kwargs.get("max_new_tokens", 256),
                 "do_sample": kwargs.get("do_sample", False),
-                "temperature": kwargs.get("temperature", 0.1),
-                "top_p": kwargs.get("top_p", 0.95),
             }
             # 若用户传入了 max_length，优先 max_new_tokens；避免 transformers 同时设置后警告
             if "max_length" in kwargs:

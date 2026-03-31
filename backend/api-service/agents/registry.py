@@ -11,14 +11,16 @@ logger = get_logger(__name__)
 
 
 def _default_local_model():
-    # 仅支持仓库中 ai/models 下的本地模型目录
+    # 默认选择 ai/models/model_serving 下的第一个文件夹作为本地模型目录
     root = Path(__file__).resolve().parents[3]
-    local_model = root / "ai" / "models" / "Qwen3___5-4B"
-    if local_model.exists():
-        return str(local_model)
-    raise FileNotFoundError(
-        f"默认本地模型未找到：{local_model}。请在 ai/models 下放置模型或显式指定 model 参数。"
-    )
+    serving_dir = root / "ai" / "models" / "model_serving"
+    if not serving_dir.exists() or not serving_dir.is_dir():
+        raise FileNotFoundError(f"默认本地模型目录未找到：{serving_dir}")
+    # 查找第一个子文件夹
+    for item in serving_dir.iterdir():
+        if item.is_dir():
+            return str(item)
+    raise FileNotFoundError(f"ai/models/model_serving 下未找到任何模型文件夹，请添加模型后重试。")
 
 
 def get_agent(provider: str = "local", model: Optional[str] = None):

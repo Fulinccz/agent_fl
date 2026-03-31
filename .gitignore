@@ -24,7 +24,7 @@ go.sum
 
 # Model-related directories
 ai/
-
+distill_first_run/
 # System files
 .DS_Store
 Thumbs.db
