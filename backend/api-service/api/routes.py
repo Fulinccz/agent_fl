@@ -1,31 +1,26 @@
-from fastapi.responses import StreamingResponse
-from transformers import TextIteratorStreamer
-import threading
-@router.post("/agent/stream")
-async def agent_stream(request: AgentRequest):
-    agent = AgentService()._get_local_agent(request.model)
-    streamer = TextIteratorStreamer(agent.transformers_pipeline.tokenizer, skip_prompt=True, skip_special_tokens=True)
-    thread = threading.Thread(
-        target=agent.transformers_pipeline.model.generate,
-        kwargs=dict(
-            inputs=request.query,
-            streamer=streamer,
-        )
-    )
-    thread.start()
-    return StreamingResponse(streamer, media_type="text/plain")
-    def _get_local_agent(self, model: Optional[str] = None):
-        return get_agent(provider="local", model=model)
-# api/routes.py
-from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel
 
-from services.agent_service import AgentService
+
+from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from agents.registry import get_agent
 from services.exceptions import AppError
 from logger import get_logger
+import json
 
 router = APIRouter()
 logger = get_logger(__name__)
+
+
+
+@router.post("/agent/stream")
+async def agent_stream(request: "AgentRequest"):
+    agent = get_agent(provider="local", model=request.model)
+    def event_stream():
+        for item in agent.generate_with_thoughts(request.query):
+            # 以 JSON 行流式输出，前端易于解析
+            yield json.dumps(item, ensure_ascii=False) + "\n"
+    return StreamingResponse(event_stream(), media_type="application/json")
 
 
 class AgentRequest(BaseModel):
