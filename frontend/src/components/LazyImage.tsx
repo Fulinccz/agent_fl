@@ -20,7 +20,10 @@ const LazyImage: React.FC<LazyImageProps> = ({
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
-    const imageUrl = loadImage(src, isCritical);
+    // 检查 src 是否为导入的模块（通常以 http 或 / 开头的是路径，否则是导入的模块）
+    const isImportedModule = !src.startsWith('http') && !src.startsWith('/');
+    
+    const imageUrl = isImportedModule ? src : loadImage(src, isCritical);
     
     const img = new Image();
     img.src = imageUrl;
