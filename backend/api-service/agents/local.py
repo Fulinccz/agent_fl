@@ -65,6 +65,22 @@ class LocalAgent(BaseAgent):
             raise FileNotFoundError(
                 f"本地模型路径不存在: {model_path}. 仅支持 ai/models 目录下模型。"
             )
+        
+        # 初始化停止标志
+        self._stop_generation = False
+
+    def stop_generation(self):
+        """停止生成"""
+        self._stop_generation = True
+        # 尝试停止streamer
+        if hasattr(self, '_streamer') and self._streamer:
+            try:
+                if hasattr(self._streamer, 'stop'):
+                    self._streamer.stop()
+                    logger.info("Streamer stopped")
+            except Exception as e:
+                logger.error(f"Error stopping streamer: {e}")
+        logger.info("用户请求停止生成")
 
     def generate(self, prompt: str, images: Optional[List[str]] = None, **kwargs) -> str:
         """Generate text from local transformers model only."""
@@ -91,7 +107,6 @@ class LocalAgent(BaseAgent):
                 "top_p": 0.9,
                 "top_k": 40,
                 "do_sample": True,
-                "early_stopping": True,  # 生成完成后停止，避免无限输出
             }
 
             outputs = self.transformers_pipeline.model.generate(**generate_kwargs)
@@ -108,12 +123,61 @@ class LocalAgent(BaseAgent):
         except Exception as e:
             raise RuntimeError(f"Local transformers 生成失败: {e}") from e
 
+    def _process_token(self, token: str, in_think_tag: bool, think_buffer: str, full_text: str) -> tuple[bool, str, str, list[Dict[str, Any]]]:
+        """
+        处理单个token，解析think标签并返回处理结果
+        
+        Args:
+            token: 输入token
+            in_think_tag: 是否在think标签内
+            think_buffer: 当前think内容缓冲区
+            full_text: 当前完整文本
+            
+        Returns:
+            (新的in_think_tag状态, 新的think_buffer, 新的full_text, 要yield的内容列表)
+        """
+        outputs = []
+        
+        # 解析think标签
+        if "<think>" in token and not in_think_tag:
+            in_think_tag = True
+            # 提取<think>之后的内容
+            think_start = token.find("<think>") + len("<think>")
+            if think_start < len(token):
+                think_buffer += token[think_start:]
+        elif "</think>" in token and in_think_tag:
+            in_think_tag = False
+            # 提取</think>之前的内容
+            think_end = token.find("</think>")
+            think_buffer += token[:think_end]
+            # 发送think内容
+            if think_buffer.strip():
+                outputs.append({"type": "thought", "content": think_buffer.strip()})
+            think_buffer = ""
+            # 提取</think>之后的内容作为正常输出
+            after_think = token[think_end + len("</think>"):]
+            if after_think:
+                full_text += after_think
+                outputs.append({"type": "token", "content": after_think, "full_text": full_text})
+        elif in_think_tag:
+            think_buffer += token
+        else:
+            # 正常输出（不在think标签内）
+            full_text += token
+            outputs.append({"type": "token", "content": token, "full_text": full_text})
+        
+        return in_think_tag, think_buffer, full_text, outputs
+
     def generate_with_thoughts(self, prompt: str, **kwargs) -> Generator[Dict[str, Any], None, None]:
         """
-        流式生成文本，修复重复+完整显示
+        流式生成文本，支持停止生成和think标签解析
         """
+        # 重置停止标志
+        self._stop_generation = False
+        
         full_text = ""
-        yield {"type": "thought", "content": f"收到用户输入: {prompt[:100]}..." if len(prompt) > 100 else f"收到用户输入: {prompt}"}
+        in_think_tag = False
+        think_buffer = ""
         
         if self.transformers_pipeline is None:
             yield {"type": "error", "content": "本地模型尚未加载，无法执行生成。"}
@@ -130,15 +194,17 @@ class LocalAgent(BaseAgent):
             tokenizer = self.transformers_pipeline.tokenizer
             inputs = tokenizer(prompt, return_tensors="pt")
             
-            # ========== 核心修复2：流式生成也添加去重参数 ==========
+            # 流式生成参数
             streamer = TextIteratorStreamer(
                 tokenizer, 
                 skip_prompt=True, 
                 skip_special_tokens=True,
                 timeout=timeout,
-                # 修复：每次只返回1个token，避免前端渲染卡顿
                 chunk_size=1
             )
+            
+            # 保存streamer引用，用于停止生成
+            self._streamer = streamer
             
             generate_kwargs = {
                 **inputs,
@@ -146,11 +212,10 @@ class LocalAgent(BaseAgent):
                 "pad_token_id": tokenizer.eos_token_id,
                 "temperature": kwargs.get("temperature", 0.3),
                 "max_new_tokens": kwargs.get("max_new_tokens", 1024),
-                "repetition_penalty": 1.2,  # 流式生成也加去重
+                "repetition_penalty": 1.2,
                 "top_p": 0.9,
                 "top_k": 40,
                 "do_sample": True,
-                "early_stopping": True,
             }
 
             import threading
@@ -161,45 +226,93 @@ class LocalAgent(BaseAgent):
             )
             thread.start()
             
-            yield {"type": "thought", "content": "开始流式生成文本..."}
+            # 防止重复token累积
+            last_token = ""
             
-            # ========== 核心修复3：防止重复token累积 ==========
-            last_token = ""  # 记录上一个token，避免重复
-            for token in streamer:
-                if time.time() - start_time > timeout:
-                    yield {"type": "thought", "content": f"模型推理超时（超过 {timeout} 秒），已生成部分内容"}
-                    return
-                
-                # 过滤空token + 重复token
-                token_clean = token.strip()
-                if not token_clean or token_clean == last_token:
-                    continue
-                
-                # 更新最后一个token
-                last_token = token_clean
-                full_text += token
-                
-                # ========== 核心修复4：确保前端能完整接收 ==========
-                yield {
-                    "type": "token", 
-                    "content": token,
-                    "full_text": full_text,
-                    # 新增：标记是否是最后一个token，方便前端处理
-                    "is_last": False
-                }
+            try:
+                for token in streamer:
+                    # 检查是否停止生成
+                    if self._stop_generation:
+                        yield {"type": "thought", "content": "用户已中止生成"}
+                        # 尝试停止streamer
+                        if hasattr(streamer, 'stop'):
+                            streamer.stop()
+                        return
+                    
+                    if time.time() - start_time > timeout:
+                        # 超时前再次检查是否已停止
+                        if not self._stop_generation:
+                            yield {"type": "thought", "content": f"模型推理超时（超过 {timeout} 秒），已生成部分内容"}
+                        return
+                    
+                    # 过滤空token + 重复token
+                    token_clean = token.strip()
+                    if not token_clean or token_clean == last_token:
+                        continue
+                    
+                    # 更新最后一个token
+                    last_token = token_clean
+                    
+                    # 处理token，解析think标签
+                    in_think_tag, think_buffer, full_text, outputs = self._process_token(
+                        token, in_think_tag, think_buffer, full_text
+                    )
+                    
+                    # 检查是否在处理过程中被停止
+                    if self._stop_generation:
+                        yield {"type": "thought", "content": "用户已中止生成"}
+                        # 尝试停止streamer
+                        if hasattr(streamer, 'stop'):
+                            streamer.stop()
+                        return
+                    
+                    # 输出处理结果
+                    for output in outputs:
+                        yield output
+            except Exception as e:
+                # 捕获可能的异常，如streamer被中断
+                if "stop" in str(e).lower() or "abort" in str(e).lower() or "canceled" in str(e).lower():
+                    logger.info("Generation stopped by user")
+                    yield {"type": "thought", "content": "用户已中止生成"}
+                    # 尝试停止streamer
+                    if hasattr(streamer, 'stop'):
+                        streamer.stop()
+                else:
+                    logger.error(f"Error during generation: {e}")
+            
+            # 检查是否在循环结束后被停止
+            if self._stop_generation:
+                yield {"type": "thought", "content": "用户已中止生成"}
+                return
             
             thread.join(timeout=5)
-            # 生成完成，告诉前端结束
-            yield {
-                "type": "thought", 
-                "content": "推理结束，生成完成。",
-                "full_text": full_text,
-                "is_last": True
-            }
+            
+            # 检查是否在线程等待后被停止
+            if self._stop_generation:
+                yield {"type": "thought", "content": "用户已中止生成"}
+                return
+            
+            # 如果还有未发送的think内容，发送它
+            if think_buffer.strip():
+                yield {"type": "thought", "content": think_buffer.strip()}
+            
+            # 生成完成，确保full_text中不包含think标签
+            full_text = re.sub(r'<think>[\s\S]*?</think>', '', full_text)
+            yield {"type": "complete", "full_text": full_text}
             
         except Exception as e:
             logger.error(f"流式生成失败: {e}")
-            yield {"type": "error", "content": f"Local transformers 生成失败: {str(e)}"}
+            # 检查是否是中止错误
+            if "abort" in str(e).lower() or "stop" in str(e).lower():
+                yield {"type": "thought", "content": "用户已中止生成"}
+            else:
+                yield {"type": "error", "content": f"Local transformers 生成失败: {str(e)}"}
+        finally:
+            # 确保停止标志被设置
+            self._stop_generation = True
+            # 清理streamer引用
+            if hasattr(self, '_streamer'):
+                delattr(self, '_streamer')
 
     def generate_with_image(self, prompt: str, image_path: str, **kwargs) -> str:
         """当前本地模型仅支持文本推理。"""

@@ -25,13 +25,17 @@ def _default_local_model():
 
 def get_agent(provider: str = "local", model: Optional[str] = None):
     """Return an agent implementation based on the provider string."""
+    import time
+    call_time = time.strftime('%H:%M:%S')
+    logger.info(f"[{call_time}] === get_agent 被调用 ===")
+    logger.info(f"[{call_time}] provider={provider}, model={model}")
 
     normalized = (provider or "").strip().lower()
     if normalized in {"online", "openai", "cloud"}:
-        logger.info("Using OpenAI agent provider (model=%s)", model or "gpt-3.5-turbo")
+        logger.info(f"[{call_time}] Using OpenAI agent provider (model=%s)", model or "gpt-3.5-turbo")
         return OpenAIAgent(model=model or "gpt-3.5-turbo")
 
     chosen_model = model or _default_local_model()
-    logger.info("Using Local agent provider (model=%s)", chosen_model)
+    logger.info(f"[{call_time}] Using Local agent provider (model=%s)", chosen_model)
     return LocalAgent(model_name=chosen_model)
 

@@ -9,9 +9,7 @@ class AppSettings(BaseSettings):
     model_provider: str = "local"
     model_name: str = "Qwen3___5-4B"
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    model_config = {"extra": "ignore"}
 
     @classmethod
     def load(cls):

@@ -1,6 +1,6 @@
 
 
-from fastapi import APIRouter, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, status, UploadFile, File, Form, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from agents.registry import get_agent
@@ -10,6 +10,7 @@ from logger import get_logger
 import json
 import os
 from datetime import datetime
+import asyncio
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -20,12 +21,41 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 @router.post("/agent/stream")
-async def agent_stream(request: "AgentRequest"):
-    agent = get_agent(provider="local", model=request.model)
-    def event_stream():
-        for item in agent.generate_with_thoughts(request.query):
-            # 以 JSON 行流式输出，前端易于解析
-            yield json.dumps(item, ensure_ascii=False) + "\n"
+async def agent_stream(request: Request, data: "AgentRequest"):
+    import time
+    call_time = time.strftime('%H:%M:%S')
+    logger.info(f"[{call_time}] === agent_stream 被调用 ===")
+    logger.info(f"[{call_time}] query={data.query[:50] if data.query else 'empty'}..., model={data.model}")
+    
+    agent = get_agent(provider="local", model=data.model)
+    
+    async def event_stream():
+        try:
+            item_count = 0
+            for item in agent.generate_with_thoughts(data.query):
+                item_count += 1
+                
+                # 检查客户端是否已经断开连接
+                if await request.is_disconnected():
+                    logger.info(f"[{call_time}] Client disconnected after {item_count} items, stopping generation")
+                    agent.stop_generation()
+                    break
+                
+                # 以 JSON 行流式输出，前端易于解析
+                yield json.dumps(item, ensure_ascii=False) + "\n"
+                
+                # 给事件循环一个机会来运行其他任务
+                await asyncio.sleep(0)
+            
+            logger.info(f"[{call_time}] Stream completed, total items: {item_count}")
+        except Exception as e:
+            logger.error(f"[{call_time}] Stream error: %s", e)
+            agent.stop_generation()
+        finally:
+            logger.info(f"[{call_time}] event_stream finally block, calling stop_generation")
+            agent.stop_generation()
+    
+    logger.info(f"[{call_time}] 返回 StreamingResponse")
     return StreamingResponse(event_stream(), media_type="application/json")
 
 

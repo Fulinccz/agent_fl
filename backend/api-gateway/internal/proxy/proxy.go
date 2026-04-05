@@ -2,9 +2,11 @@ package proxy
 
 import (
 	"agent-api/internal/config"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -26,9 +28,27 @@ func PythonStreamProxy() gin.HandlerFunc {
 				proxyReq.Header.Add(key, value)
 			}
 		}
+
+		// 创建一个上下文，当客户端中止请求时，也中止对Python服务的请求
+		ctx, cancel := context.WithCancel(c.Request.Context())
+		defer cancel()
+		proxyReq = proxyReq.WithContext(ctx)
+
+		// 监听客户端中止请求
+		go func() {
+			<-c.Request.Context().Done()
+			// 客户端中止请求，取消对Python服务的请求
+			cancel()
+		}()
+
 		client := &http.Client{}
 		resp, err := client.Do(proxyReq)
 		if err != nil {
+			// 检查是否是上下文取消错误（客户端中止请求）
+			if err == context.Canceled || strings.Contains(err.Error(), "context canceled") {
+				// 客户端中止请求，直接返回，不返回错误
+				return
+			}
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"error":      "Failed to connect to Python service",
 				"details":    err.Error(),
@@ -46,6 +66,14 @@ func PythonStreamProxy() gin.HandlerFunc {
 		// 关键：流式复制响应体
 		buf := make([]byte, 4096)
 		for {
+			// 检查客户端是否已经中止请求
+			select {
+			case <-ctx.Done():
+				// 客户端中止请求，停止复制响应体
+				return
+			default:
+			}
+			
 			n, err := resp.Body.Read(buf)
 			if n > 0 {
 				c.Writer.Write(buf[:n])
