@@ -11,3 +11,8 @@ peft
 datasets
 bitsandbytes
 python-dotenv
+sentence-transformers
+faiss-cpu
+numpy
+PyPDF2
+python-docx

@@ -6,8 +6,9 @@ export interface Message {
 }
 
 export interface StreamEvent {
-  type: 'thought' | 'content' | 'error' | 'done';
-  content: string;
+  type: 'thought' | 'token' | 'complete' | 'error';
+  content?: string;
+  full_text?: string;
 }
 
 export interface AgentRequest {

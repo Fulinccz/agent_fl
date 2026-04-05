@@ -198,6 +198,37 @@ class LocalProvider(BaseProvider):
         except Exception as e:
             raise RuntimeError(f"Local transformers 生成失败: {e}") from e
 
+    def _filter_think_content(self, content: str) -> str:
+        """过滤思考内容中的 Prompt 指令重复"""
+        patterns = [
+            r'按以下\d*个部分输出',
+            r'每部分用【标题】开头',
+            r'Each part must start with',
+            r'Output according to',
+            r'indicat.*prompt',
+            r'marker.*be formatted',
+            r'looking closely at the instruction',
+            r'The instruction says',
+            r'【简历评分】.*?只给分数',
+            r'【优化建议】.*?简短列出',
+            r'【优化结果】.*?重写一版',
+            r'先用.*结束',
+            r'之后按以下',
+        ]
+        
+        lines = content.split('\n')
+        filtered = []
+        for line in lines:
+            should_skip = False
+            for pattern in patterns:
+                if re.search(pattern, line, re.IGNORECASE):
+                    should_skip = True
+                    break
+            if not should_skip and line.strip():
+                filtered.append(line)
+        
+        return '\n'.join(filtered)
+
     def _process_token(
         self, 
         token: str, 
@@ -224,7 +255,9 @@ class LocalProvider(BaseProvider):
                 # 同一个 token 中有完整的 think 标签
                 think_parts = remaining.split("</think>", 1)
                 if think_parts[0].strip():
-                    outputs.append({"type": "thought", "content": think_parts[0].strip()})
+                    filtered_content = self._filter_think_content(think_parts[0].strip())
+                    if filtered_content:
+                        outputs.append({"type": "thought", "content": filtered_content})
                 after = think_parts[1] if len(think_parts) > 1 else ""
                 if after.strip():
                     full_text += after
@@ -242,7 +275,9 @@ class LocalProvider(BaseProvider):
             think_buffer += parts[0]
             
             if think_buffer.strip():
-                outputs.append({"type": "thought", "content": think_buffer.strip()})
+                filtered_content = self._filter_think_content(think_buffer.strip())
+                if filtered_content:
+                    outputs.append({"type": "thought", "content": filtered_content})
             
             think_buffer = ""
             in_think_tag = False
@@ -258,7 +293,9 @@ class LocalProvider(BaseProvider):
             think_buffer += token
             # 遇到换行或积累足够内容时输出（避免逐 token 碎片化显示）
             if '\n' in token or len(think_buffer) >= 30:
-                outputs.append({"type": "thought", "content": think_buffer})
+                filtered_content = self._filter_think_content(think_buffer)
+                if filtered_content:
+                    outputs.append({"type": "thought", "content": filtered_content})
                 think_buffer = ""
         else:
             # 普通文本

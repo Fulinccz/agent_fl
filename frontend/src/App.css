@@ -424,6 +424,30 @@ body {
   opacity: 0.8;
 }
 
+/* 任务类型选择器样式 */
+.task-type-select {
+  background-color: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9em;
+  transition: all 0.2s ease;
+  box-shadow: var(--shadow-sm);
+  outline: none;
+}
+
+.task-type-select:hover {
+  background-color: var(--file-bg);
+  box-shadow: var(--shadow-md);
+}
+
+.task-type-select option {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
 /* 附件容器样式 */
 .attachment-container {
   position: relative;
@@ -588,6 +612,7 @@ body {
 .output-section h3 {
   margin-top: 0;
   margin-bottom: 0.2rem;
+  flex-shrink: 0;
 }
 
 .thought-section {
@@ -616,34 +641,76 @@ body {
 .output-content,
 .response {
   margin-top: 0.4rem;
-  padding: 0.5rem;
+  padding: 0.8rem;
   border: 1px solid var(--border-color);
   border-radius: 8px;
   background-color: var(--file-bg);
   color: var(--text-color);
   text-align: left;
-  min-height: 350px;
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 输出文本 - 连续展示（与思考过程对齐） */
+.output-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-family: inherit;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--text-color);
+}
+
+/* 输出空状态 */
+.output-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  color: var(--text-secondary);
+  opacity: 0.6;
 }
 
 /* 思考内容样式 */
 .thought-box,
 .thoughts-content {
   margin-top: 0.4rem;
-  padding: 0.5rem;
+  padding: 0.8rem;
   border: 1px solid var(--border-color);
   border-radius: 8px;
   background-color: var(--file-bg);
-  min-height: 350px;
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
-/* 单个思考项样式 */
-.thought-item {
-  margin-bottom: 0.3rem;
-  padding: 0.3rem;
-  background-color: var(--file-bg);
-  border-radius: 4px;
+/* 思考内容 - 连续文本展示 */
+.thought-content {
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-family: inherit;
   font-size: 0.9rem;
+  line-height: 1.6;
   color: var(--text-color);
+}
+
+/* 空状态样式 */
+.thought-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  color: var(--text-secondary);
+  opacity: 0.6;
 }
 
 /* 结果窗口样式 */
@@ -655,7 +722,55 @@ body {
   min-height: 400px;
 }
 
-/* 响应样式 */
+/* 多维度输出样式 - 垂直堆叠 */
+.multi-dimension-output {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  width: 100%;
+  height: 100%;
+}
+
+.dimension-section {
+  background-color: var(--file-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 0.7rem;
+}
+
+.dimension-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.dimension-content {
+  flex: 1;
+  overflow-y: auto;
+  color: var(--text-color);
+  font-size: 0.85rem;
+}
+
+.json-output {
+  margin: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text-color);
+}
+
+.dimension-empty {
+  color: var(--text-secondary);
+  font-style: italic;
+  opacity: 0.6;
+}
+
+/* 响应式：小屏幕 */
 .response {
   margin-top: 0.5rem;
   padding: 0.5rem;
