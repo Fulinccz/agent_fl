@@ -15,6 +15,10 @@ import asyncio
 router = APIRouter()
 logger = get_logger(__name__)
 
+@router.get("/health")
+async def health_check():
+    return {"status": "healthy", "service": "api-service"}
+
 # 确保上传目录存在
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -26,13 +30,39 @@ async def agent_stream(request: Request, data: "AgentRequest"):
     call_time = time.strftime('%H:%M:%S')
     logger.info(f"[{call_time}] === agent_stream 被调用 ===")
     logger.info(f"[{call_time}] query={data.query[:50] if data.query else 'empty'}..., model={data.model}")
+    logger.info(f"[{call_time}] deepThinking={getattr(data, 'deepThinking', False)}")
     
     agent = get_agent(provider="local", model=data.model)
+    
+    # 根据是否开启深度思考，选择不同的系统提示
+    if getattr(data, 'deepThinking', False):
+        logger.info(f"[{call_time}] 使用深度思考模式")
+        system_prompt = """你是一个简历优化助手。必须用中文回答。
+
+格式要求：先用<think>写分析过程，再用</think>结束，然后写最终答案。
+
+示例：
+<think>
+分析用户需求...
+识别关键技能...
+</think>
+这是最终的优化建议...
+
+现在开始回答："""
+    else:
+        logger.info(f"[{call_time}] 使用快速响应模式（无深度思考）")
+        system_prompt = """你是一个简历优化助手，请用中文回答。
+
+请直接开始回答，不要加任何前缀。
+
+请开始："""
+    
+    full_prompt = system_prompt + data.query
     
     async def event_stream():
         try:
             item_count = 0
-            for item in agent.generate_with_thoughts(data.query):
+            for item in agent.generate_with_thoughts(full_prompt):
                 item_count += 1
                 
                 # 检查客户端是否已经断开连接
@@ -63,6 +93,7 @@ class AgentRequest(BaseModel):
     query: str
     provider: str = "local"
     model: str | None = None
+    deepThinking: bool = False
 
 
 @router.post("/agent")

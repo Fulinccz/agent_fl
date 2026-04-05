@@ -36,6 +36,6 @@ export default defineConfig({
       },
     },
   },
-  // CDN 基础路径（生产环境）
-  base: process.env.NODE_ENV === 'production' ? 'https://cdn.example.com/' : '/',
+  // 基础路径
+  base: '/',
 });

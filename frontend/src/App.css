@@ -328,18 +328,28 @@ body {
 .send-button {
   width: 32px;
   height: 32px;
+  min-width: 32px;
+  max-width: 32px;
+  min-height: 32px;
+  max-height: 32px;
   box-sizing: border-box;
   border-radius: 50%;
   border: 1px solid var(--border-color);
   background-color: var(--card-bg);
   color: var(--text-color);
   cursor: pointer;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 1em;
+  font-size: 12px;
+  line-height: 0;
+  padding: 0;
+  margin: 0;
   transition: all 0.2s ease;
   box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  flex-shrink: 0;
+  position: relative;
 }
 .send-button:hover {
   background-color: var(--file-bg);
@@ -382,6 +392,36 @@ body {
   background-color: var(--file-bg);
   box-shadow: var(--shadow-md);
   transform: translateY(-1px);
+}
+
+/* 深度思考按钮样式 */
+.deep-think-button {
+  background-color: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9em;
+  transition: all 0.2s ease;
+  box-shadow: var(--shadow-sm);
+  white-space: nowrap;
+}
+
+.deep-think-button:hover {
+  background-color: var(--file-bg);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.deep-think-button.active {
+  background-color: transparent;
+  color: #6eb5ff;
+  border-color: #6eb5ff;
+}
+
+.deep-think-button.active:hover {
+  opacity: 0.8;
 }
 
 /* 附件容器样式 */
@@ -522,7 +562,7 @@ body {
 
 /* 输出容器样式 */
 .output-container {
-  display: flex;
+  display: flex !important;
   gap: 0;
   margin-top: 1rem;
   min-height: 400px;
@@ -536,30 +576,59 @@ body {
   margin-right: auto;
 }
 
-/* 窗口标题样式 */
+/* 输出区域通用样式 */
+.output-section {
+  padding: 0.5rem;
+  text-align: left;
+  overflow-y: auto;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+.output-section h3 {
+  margin-top: 0;
+  margin-bottom: 0.2rem;
+}
+
+.thought-section {
+  flex: 1 !important;
+  border-right: 1px solid var(--border-color);
+  max-height: 500px;
+}
+
+.result-window {
+  flex: 2 !important;
+  min-height: 400px;
+}
+
+/* 输出标题样式 */
+.output-title,
 .window-title {
   font-size: 1rem;
   font-weight: 600;
   color: var(--text-secondary);
-  margin-bottom: 0.5rem;
+  margin-bottom: 0;
   padding-bottom: 0.3rem;
   border-bottom: 1px solid var(--border-color);
 }
 
-/* 思考过程窗口样式 */
-.thoughts-window {
-  flex: 1;
+/* 输出内容样式 */
+.output-content,
+.response {
+  margin-top: 0.4rem;
   padding: 0.5rem;
-  border-right: 1px solid var(--border-color);
-  background-color: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background-color: var(--file-bg);
+  color: var(--text-color);
   text-align: left;
-  max-height: 500px;
-  overflow-y: auto;
+  min-height: 350px;
 }
 
 /* 思考内容样式 */
+.thought-box,
 .thoughts-content {
-  margin-top: 0.5rem;
+  margin-top: 0.4rem;
   padding: 0.5rem;
   border: 1px solid var(--border-color);
   border-radius: 8px;

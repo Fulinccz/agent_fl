@@ -1,6 +1,6 @@
-# main.py
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+import uvicorn
 
 from api.routes import router
 from logger import get_logger
@@ -17,12 +17,16 @@ async def lifespan(app: FastAPI):
     logger.info("api-service shutting down")
 
 
-app = FastAPI(title="api-service", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Fulin AI API Service", version="1.0.0", lifespan=lifespan)
 app.include_router(router, prefix="/api")
 
 
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "service": "api-service", "version": "1.0.0"}
+
+
 if __name__ == "__main__":
-    import uvicorn
     import torch
 
     def set_torch_threads():

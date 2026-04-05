@@ -1,13 +1,12 @@
 module agent-api
 
-go 1.24.0
-
-toolchain go1.24.11
+go 1.25.0
 
 require (
 	github.com/gin-contrib/cors v1.5.0
 	github.com/gin-gonic/gin v1.9.1
 	github.com/spf13/viper v1.21.0
+	golang.org/x/time v0.15.0
 )
 
 require (

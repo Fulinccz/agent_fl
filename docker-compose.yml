@@ -1,30 +1,58 @@
 services:
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      dockerfile: dockerfile
     ports:
       - "80:80"
     depends_on:
-      - go-service
+      go-service:
+        condition: service_healthy
+    restart: unless-stopped
     networks:
       - app-network
 
   go-service:
-    build: ./backend/api-gateway
+    build:
+      context: ./backend/api-gateway
+      dockerfile: dockerfile
     ports:
       - "8080:8080"
     depends_on:
-      - python-service
+      python-service:
+        condition: service_healthy
     environment:
       - PYTHON_BASEURL=http://python-service:8000
+      - GIN_MODE=release
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     networks:
       - app-network
 
   python-service:
-    build: ./backend/api-service
+    build:
+      context: ./backend/api-service
+      dockerfile: dockerfile
     volumes:
       - ./ai/models:/app/ai/models
+      - ./uploads:/app/uploads
     ports:
       - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=INFO
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     networks:
       - app-network
 
