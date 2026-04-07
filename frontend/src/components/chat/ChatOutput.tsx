@@ -43,7 +43,7 @@ const ChatOutput: React.FC<ChatOutputProps> = ({
 
   return (
     <div className={`output-section ${className}`}>
-      {title && <h3 className="output-title">📝 {title}</h3>}
+      {title && <h3 className="output-title">{title}</h3>}
       <div className="output-content">
         <pre className="output-text">{formatted}</pre>
       </div>

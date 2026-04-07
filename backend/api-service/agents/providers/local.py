@@ -262,7 +262,6 @@ class LocalProvider(BaseProvider):
                 if after.strip():
                     full_text += after
                     outputs.append({"type": "token", "content": after, "full_text": full_text})
-                # 保持 in_think_tag 不变（已经完成了一个完整的 think）
             else:
                 # 进入 think 模式，保存剩余内容到 buffer
                 in_think_tag = True
@@ -292,13 +291,32 @@ class LocalProvider(BaseProvider):
             # 在 think 标签内，累积内容
             think_buffer += token
             # 遇到换行或积累足够内容时输出（避免逐 token 碎片化显示）
+            # 但要检查是否包含 </think> 结束标签
             if '\n' in token or len(think_buffer) >= 30:
-                filtered_content = self._filter_think_content(think_buffer)
-                if filtered_content:
-                    outputs.append({"type": "thought", "content": filtered_content})
-                think_buffer = ""
+                # 先检查 buffer 中是否有 </think>
+                if "</think>" in think_buffer:
+                    # buffer 中有结束标签，需要分割处理
+                    think_parts = think_buffer.split("</think>", 1)
+                    if think_parts[0].strip():
+                        filtered_content = self._filter_think_content(think_parts[0].strip())
+                        if filtered_content:
+                            outputs.append({"type": "thought", "content": filtered_content})
+                    
+                    think_buffer = ""
+                    in_think_tag = False
+                    
+                    # </think> 之后的内容作为普通文本
+                    if len(think_parts) > 1 and think_parts[1].strip():
+                        full_text += think_parts[1]
+                        outputs.append({"type": "token", "content": think_parts[1], "full_text": full_text})
+                else:
+                    # 没有结束标签，正常输出思考内容
+                    filtered_content = self._filter_think_content(think_buffer)
+                    if filtered_content:
+                        outputs.append({"type": "thought", "content": filtered_content})
+                    think_buffer = ""
         else:
-            # 普通文本
+            # 普通文本（不在 think 标签内）
             full_text += token
             outputs.append({"type": "token", "content": token, "full_text": full_text})
         
@@ -365,6 +383,11 @@ class LocalProvider(BaseProvider):
             thread.start()
             
             last_token = ""
+            stop_patterns = [
+                "\n【简历评分】",  # 第二次出现简历评分，说明开始重复
+                "\n### 【简历评分】",
+                "\n## 【简历评分】",
+            ]
             
             try:
                 for token in streamer:
@@ -389,6 +412,15 @@ class LocalProvider(BaseProvider):
                         continue
                     
                     last_token = token_clean
+                    
+                    # 检测是否需要停止（避免重复输出）
+                    full_text_lower = full_text.lower()
+                    if "【优化结果】" in full_text:
+                        # 已经输出过优化结果，检查是否开始重复
+                        for pattern in stop_patterns:
+                            if pattern in full_text:
+                                logger.info(f"检测到重复模式 '{pattern}'，停止生成")
+                                return
                     
                     in_think_tag, think_buffer, full_text, outputs = self._process_token(
                         token, in_think_tag, think_buffer, full_text

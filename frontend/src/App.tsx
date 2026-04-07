@@ -107,7 +107,7 @@ function App() {
         
         <ChatOutput
           content={response}
-          title="优化建议"
+          title="📝 优化建议"
           className="result-window"
         />
       </div>

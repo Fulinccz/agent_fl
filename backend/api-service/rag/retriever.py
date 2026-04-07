@@ -13,10 +13,11 @@ class RAGRetriever:
         similarity_threshold: float = 0.3
     ):
         self.collection_name = collection_name
-        self.persist_dir = persist_dir or os.path.join(os.getcwd(), "data", "vector_db")
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.persist_dir = persist_dir or os.path.join(base_dir, "data", "vector_db")
         self.top_k = top_k
         self.similarity_threshold = similarity_threshold
-        
+
         self._embedding_service = None
         self._vector_store = None
         self._document_processor = None
@@ -53,7 +54,8 @@ class RAGRetriever:
         knowledge_dir: str = None,
         force_rebuild: bool = False
     ) -> Dict[str, Any]:
-        knowledge_dir = knowledge_dir or os.path.join(os.getcwd(), "data", "resume_knowledge")
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        knowledge_dir = knowledge_dir or os.path.join(base_dir, "data", "resume_knowledge")
         
         if not os.path.exists(knowledge_dir):
             logger.warning(f"Knowledge directory not found: {knowledge_dir}")

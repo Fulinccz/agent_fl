@@ -26,18 +26,18 @@ const Modal: React.FC<ModalProps> = ({
       className="modal-overlay"
       onClick={onClose}
     >
-      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>{title}</h3>
         <p>{message}</p>
         <div className="modal-actions">
           <button 
-            className="btn-secondary"
+            className="modal-cancel"
             onClick={onClose}
           >
             {cancelText}
           </button>
           <button 
-            className="btn-primary"
+            className="modal-confirm"
             onClick={() => {
               onConfirm();
               onClose();
