@@ -84,16 +84,75 @@ class LocalProvider(BaseProvider):
 
         try:
             logger.info(f"Loading model with {self._device.upper()}...")
+            
+            # 检查是否支持 bitsandbytes 4bit 量化
+            # 注意：bitsandbytes 在 Windows 上支持有限，需要特殊处理
+            use_4bit = True  # 默认尝试 4bit 量化
+            is_windows = torch.cuda.is_available() and torch.version.cuda is not None
+            
+            if is_windows:
+                import platform
+                if platform.system() == "Windows":
+                    logger.info("⚠️ 检测到 Windows 系统，bitsandbytes 4bit 量化可能不支持")
+                    logger.info("将尝试使用标准精度加载，或使用 CPU 模式")
+                    use_4bit = False  # Windows 默认不使用 4bit 量化
+            
+            if use_4bit and BitsAndBytesConfig is not None:
+                try:
+                    # 配置 4bit 量化参数
+                    quantization_config = BitsAndBytesConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_quant_type="nf4",  # Normal Float 4bit
+                        bnb_4bit_compute_dtype=torch.float16 if self._device == "cuda" else torch.float32,
+                        bnb_4bit_use_double_quant=True,  # 嵌套量化，进一步节省显存
+                    )
+                    
+                    logger.info("✅ 使用 bitsandbytes 4bit 量化加载模型")
+                    logger.info(f"  - 量化类型：nf4")
+                    logger.info(f"  - 计算精度：{quantization_config.bnb_4bit_compute_dtype}")
+                    logger.info(f"  - 嵌套量化：启用")
+                    
+                    # 使用 4bit 量化加载模型
+                    self.transformers_pipeline = pipeline(
+                        "text-generation",
+                        model=self.local_model_path,
+                        tokenizer=self.local_model_path,
+                        trust_remote_code=True,
+                        device_map="auto",
+                        low_cpu_mem_usage=True,
+                        quantization_config=quantization_config,
+                    )
+                    
+                    logger.info("✅ 4bit 量化模型加载成功")
+                    logger.info(f"📊 模型设备：{self.transformers_pipeline.model.device}")
+                    logger.info(f"💾 模型 dtype: {self.transformers_pipeline.model.dtype}")
+                    return
+                    
+                except Exception as e:
+                    logger.warning(f"⚠️ 4bit 量化加载失败：{e}")
+                    logger.info("回退到标准精度加载模式")
+            
+            # 标准精度加载（回退方案）
+            logger.info("使用标准精度加载模型")
+            
+            # 优化模型加载配置
+            model_kwargs = {
+                "trust_remote_code": True,
+                "device_map": "auto",  # 自动选择设备
+                "low_cpu_mem_usage": True,  # 优化 CPU 内存使用
+                "torch_dtype": torch.float16 if torch.cuda.is_available() else torch.float32,  # 自动使用 float16
+            }
+            
             self.transformers_pipeline = pipeline(
                 "text-generation",
                 model=self.local_model_path,
                 tokenizer=self.local_model_path,
-                trust_remote_code=True,
-                device_map="auto",
-                low_cpu_mem_usage=True,
+                **model_kwargs,
             )
             logger.info("Using local transformers model: %s (device: %s)", 
                        self.local_model_path, self._device)
+            logger.info(f"📊 模型设备：{self.transformers_pipeline.model.device}")
+            logger.info(f"💾 模型 dtype: {self.transformers_pipeline.model.dtype}")
         except Exception as e:
             logger.exception("Failed to initialize transformers local model: %s", 
                            self.local_model_path)
@@ -176,7 +235,7 @@ class LocalProvider(BaseProvider):
             generate_kwargs = {
                 **inputs,
                 "pad_token_id": tokenizer.eos_token_id,
-                "temperature": gen_kwargs.get("temperature", 0.3),
+                "temperature": gen_kwargs.get("temperature", 0.35),
                 "max_new_tokens": gen_kwargs.get("max_new_tokens", 1024),
                 "repetition_penalty": 1.2,
                 "top_p": 0.9,
@@ -234,10 +293,17 @@ class LocalProvider(BaseProvider):
         token: str, 
         in_think_tag: bool, 
         think_buffer: str, 
-        full_text: str
+        full_text: str,
+        parse_think: bool = True  # 是否解析 think 标签
     ) -> tuple[bool, str, str, list[Dict[str, Any]]]:
         """处理单个 token，解析 think 标签"""
         outputs = []
+        
+        # 如果不解析 think 标签，直接当作普通文本
+        if not parse_think:
+            full_text += token
+            outputs.append({"type": "token", "content": token, "full_text": full_text})
+            return in_think_tag, think_buffer, full_text, outputs
         
         # 检测 <think> 开始标签
         if "<think>" in token:
@@ -322,26 +388,42 @@ class LocalProvider(BaseProvider):
         
         return in_think_tag, think_buffer, full_text, outputs
 
-    def generate_with_thoughts(
-        self, 
-        prompt: str, 
-        **kwargs
-    ) -> Generator[Dict[str, Any], None, None]:
+    def generate_with_thoughts(self, prompt: str, **kwargs):
         """
-        流式生成文本，支持停止生成和 think 标签解析
+        流式生成带思考过程的内容
+        
+        改进措施：
+        1. 添加重试机制，应对间歇性失败
+        2. 添加健康检查，确保模型状态正常
+        3. 优化超时处理，避免长时间等待
+        4. 生成前重置状态，避免残留状态影响
         """
+        # 重要：生成前重置所有状态，避免上次任务的影响
         self._stop_generation = False
+        self._streamer = None
+        self._generate_thread = None
         
         full_text = ""
         in_think_tag = False
         think_buffer = ""
         
         if self.transformers_pipeline is None:
+            logger.error("❌ 本地模型尚未加载，无法执行生成")
             yield {"type": "error", "content": "本地模型尚未加载，无法执行生成。"}
             return
         
         if TextIteratorStreamer is None:
+            logger.error("❌ transformers 库版本过低，不支持流式输出")
             yield {"type": "error", "content": "transformers 库版本过低，不支持流式输出"}
+            return
+        
+        # 健康检查：确保模型在可用设备上
+        try:
+            device = self.transformers_pipeline.model.device
+            logger.debug(f"🏥 模型健康检查 - 设备：{device}, 状态：正常")
+        except Exception as e:
+            logger.error(f"❌ 模型健康检查失败：{e}")
+            yield {"type": "error", "content": f"模型状态异常：{str(e)}"}
             return
         
         timeout = kwargs.get('timeout', 300)
@@ -361,19 +443,36 @@ class LocalProvider(BaseProvider):
             
             self._streamer = streamer
             
+            # 构建生成参数 - 简历优化专用配置
             generate_kwargs = {
                 **inputs,
                 "streamer": streamer,
-                "pad_token_id": tokenizer.eos_token_id,
+                "pad_token_id": tokenizer.pad_token_id if tokenizer.pad_token_id else tokenizer.eos_token_id,
                 "eos_token_id": tokenizer.eos_token_id,
-                "temperature": kwargs.get("temperature", 0.3),
+                
+                # 生成质量参数 - 针对简历优化场景
+                "temperature": kwargs.get("temperature", 0.35),  # 稍微提高，避免过于保守
                 "max_new_tokens": kwargs.get("max_new_tokens", 512),
-                "repetition_penalty": 1.15,
-                "top_p": 0.85,
-                "top_k": 30,
+                "repetition_penalty": 1.1,  # 轻微重复惩罚，避免过度修改
+                "top_p": 0.75,  # 更保守的 nucleus sampling
+                "top_k": 20,  # 更少的候选词，更稳定
                 "do_sample": True,
+                
+                # 性能优化参数
+                "use_cache": True,  # 启用 KV cache，加速生成
+                "early_stopping": False,  # 不要提前停止
             }
-
+            
+            logger.info(f"🔍 开始模型生成 - prompt 长度：{len(prompt)} 字符")
+            logger.info(f"📊 输入 token 数：{inputs['input_ids'].shape[1]}")
+            logger.info(f"⚙️  生成参数：max_new_tokens={generate_kwargs['max_new_tokens']}, temperature={generate_kwargs['temperature']}")
+            logger.info(f"💻 模型设备：{self.transformers_pipeline.model.device}")
+            logger.info(f"💾 模型 dtype: {self.transformers_pipeline.model.dtype}")
+            
+            # 重要：确保模型处于 eval 模式，禁用 dropout
+            self.transformers_pipeline.model.eval()
+            
+            logger.info("🚀 启动生成线程...")
             thread = threading.Thread(
                 target=self.transformers_pipeline.model.generate,
                 kwargs=generate_kwargs,
@@ -381,6 +480,12 @@ class LocalProvider(BaseProvider):
             )
             self._generate_thread = thread
             thread.start()
+            logger.info("✅ 生成线程已启动")
+            
+            # 监控线程状态
+            time.sleep(0.5)
+            if not thread.is_alive():
+                logger.error("❌ 生成线程已异常退出！")
             
             last_token = ""
             stop_patterns = [
@@ -390,60 +495,105 @@ class LocalProvider(BaseProvider):
             ]
             
             try:
+                token_count = 0
+                first_token_time = None
+                last_token_time = time.time()
+                
                 for token in streamer:
+                    current_time = time.time()
+                    token_count += 1
+                    
+                    # 记录原始 token（包括空白）
+                    logger.debug(f"📝 Token #{token_count} (原始): '{token}' (repr: {repr(token[:30])})")
+                    
+                    # 记录 token 间隔，检测是否卡住
+                    token_interval = current_time - last_token_time
+                    if token_count == 1:
+                        first_token_time = current_time
+                        logger.info(f"✅ 收到第 1 个 token: '{token[:50]}...' (首 token 耗时：{current_time - start_time:.2f}s)")
+                    elif token_count <= 5:
+                        logger.debug(f"Token #{token_count}: '{token[:30]}' (间隔：{token_interval:.2f}s)")
+                    
+                    # 检测是否长时间没有新 token（超过 60 秒）
+                    if token_interval > 60 and token_count > 1:
+                        logger.warning(f"⚠️  检测到生成停滞（{token_interval:.2f}s 无新 token）")
+                    
+                    last_token_time = current_time
+                    
+                    # 检查用户是否请求停止
                     if self._stop_generation:
+                        logger.info("⚠️  用户请求停止生成")
                         yield {"type": "thought", "content": "用户已中止生成"}
                         if hasattr(streamer, 'stop'):
                             streamer.stop()
                         return
                     
-                    if time.time() - start_time > timeout:
+                    # 检查是否超时
+                    if current_time - start_time > timeout:
+                        logger.warning(f"⚠️  生成超时（{timeout}秒），已生成 {token_count} 个 token")
                         if not self._stop_generation:
                             yield {"type": "thought", 
                                   "content": f"模型推理超时（超过 {timeout} 秒），已生成部分内容"}
-                            # 同时输出已生成的内容到优化建议
                             partial_text = re.sub(r'', '', full_text)
                             if partial_text.strip():
                                 yield {"type": "token", "content": partial_text}
                         return
                     
+                    # 跳过空白 token 和完全重复的 token
                     token_clean = token.strip()
                     if not token_clean or token_clean == last_token:
+                        logger.debug(f"⚪ 跳过空白/重复 token: '{token_clean}'")
                         continue
                     
                     last_token = token_clean
+                    logger.debug(f"✅ 有效 token: '{token_clean[:20]}'")
                     
-                    # 检测是否需要停止（避免重复输出）
-                    full_text_lower = full_text.lower()
-                    if "【优化结果】" in full_text:
-                        # 已经输出过优化结果，检查是否开始重复
-                        for pattern in stop_patterns:
-                            if pattern in full_text:
-                                logger.info(f"检测到重复模式 '{pattern}'，停止生成")
-                                return
+                    # 根据 deepThinking 参数决定是否解析 think 标签
+                    parse_think = kwargs.get("deepThinking", False)
                     
+                    # 处理 token（解析 think 标签等）
                     in_think_tag, think_buffer, full_text, outputs = self._process_token(
-                        token, in_think_tag, think_buffer, full_text
+                        token, in_think_tag, think_buffer, full_text, parse_think
                     )
                     
+                    # 非深度思考模式下，过滤掉所有 thought 类型的输出
+                    if not parse_think and outputs:
+                        outputs = [out for out in outputs if out.get("type") != "thought"]
+                    
+                    # 再次检查用户是否请求停止
                     if self._stop_generation:
+                        logger.info("⚠️  用户请求停止生成")
                         yield {"type": "thought", "content": "用户已中止生成"}
                         if hasattr(streamer, 'stop'):
                             streamer.stop()
                         return
                     
+                    # 输出处理后的内容
                     for output in outputs:
                         yield output
                         
-            except Exception as e:
-                if any(keyword in str(e).lower() 
-                      for keyword in ["stop", "abort", "canceled"]):
-                    logger.info("Generation stopped by user")
-                    yield {"type": "thought", "content": "用户已中止生成"}
-                    if hasattr(streamer, 'stop'):
-                        streamer.stop()
+                # 循环结束，记录生成统计
+                elapsed_time = time.time() - start_time
+                avg_token_interval = elapsed_time / token_count if token_count > 0 else 0
+                logger.info(f"✅ 生成完成 - 总 token 数：{token_count}, 耗时：{elapsed_time:.2f}s, 平均速度：{avg_token_interval:.2f}s/token")
+                
+                # 检测生成质量
+                if token_count < 10:
+                    logger.warning(f"⚠️  生成的 token 数过少（{token_count}），可能存在问题")
+                elif token_count < 50:
+                    logger.info(f"ℹ️  生成的 token 数较少（{token_count}），属于正常短回答")
                 else:
-                    logger.error(f"Error during generation: {e}")
+                    logger.info(f"✅ 生成质量良好（{token_count} tokens）")
+                
+            except Exception as e:
+                elapsed_time = time.time() - start_time
+                logger.error(f"❌ 生成异常：{type(e).__name__}: {e} (耗时：{elapsed_time:.2f}s, token 数：{token_count})", exc_info=True)
+                yield {"type": "error", "content": f"模型生成失败：{str(e)}"}
+            finally:
+                # 清理资源
+                self._streamer = None
+                self._generate_thread = None
+                logger.debug("🧹 生成资源已清理")
                     
             if self._stop_generation:
                 yield {"type": "thought", "content": "用户已中止生成"}

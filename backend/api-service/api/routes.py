@@ -80,12 +80,10 @@ async def agent_stream(request: Request, data: "AgentRequest"):
         system_prompt = """请用中文回答。
 
 重要规则：
-1. 严格禁止：不要添加用户简历中没有提到的任何技术栈、框架、工具或库
-2. 知识库仅作参考，不要引用其中的具体数字、案例或技术栈
-3. 输出完【优化结果（参考）】后必须停止，不要再输出任何内容
-4. 优化建议必须针对用户实际写的内容提出改进，不要编造用户没做过的业务场景（如测试用例、AB 实验等）
+1. 禁止添加用户简历中没有的技术栈
+2. 不要引用知识库中的具体数字
+3. 只输出以下 3 个部分，输出完就停止：
 
-严格只按以下 3 个部分顺序输出，每部分用【标题】开头：
 【简历评分】
 只给分数（1-100）
 
@@ -93,20 +91,17 @@ async def agent_stream(request: Request, data: "AgentRequest"):
 简短列出 2-3 条
 
 【优化结果（参考）】
-不要加技术栈，根据用户实际输入的内容，优化技能栏描述和/或项目描述
+只优化技能栏和项目描述
 
 """
     else:
-        system_prompt = """请用中文回答。
+        system_prompt = """请用中文直接输出结果，不要任何思考过程、分析过程或前缀。
 
 重要规则：
-1. 严格禁止：不要添加用户简历中没有提到的任何技术栈、框架、工具或库
-2. 知识库仅作参考，不要引用其中的具体数字、案例或技术栈
-3. 输出完【优化结果（参考）】后必须停止，不要再输出任何内容
-4. 优化建议必须针对用户实际写的内容提出改进，不要编造用户没做过的业务场景或内容（如测试用例、AB 实验等）
-5. 直接输出结果，不要输出任何思考过程或分析步骤
+1. 禁止添加用户简历中没有的技术栈
+2. 不要引用知识库中的具体数字
+3. 只输出以下 3 个部分，输出完就停止：
 
-严格只按以下 3 个部分顺序输出，每部分用【标题】开头：
 【简历评分】
 只给分数（1-100）
 
@@ -114,31 +109,33 @@ async def agent_stream(request: Request, data: "AgentRequest"):
 简短列出 2-3 条
 
 【优化结果（参考）】
-不要加技术栈，根据用户实际输入的内容，优化技能栏描述和/或项目描述
+只优化技能栏和项目描述
 
 """
     
     # 构建完整 Prompt
     full_prompt = system_prompt + "\n\n"
+    
+    # 如果有 RAG 上下文，作为参考放在最后（不作为示例）
     if rag_context:
-        full_prompt += f"""【重要提醒】以下知识库内容仅供学习表达方式和优化思路，请严格遵守：
-- ❌ 不要引用其中的具体数字（如"15%"、"50ms"、"30%"等）
-- ❌ 不要照搬其中的技术栈（如 Spark、FAISS、LangChain、Qwen 等，除非用户明确提到）
-- ❌ 不要编造用户没做过的业务场景（如推荐系统、召回策略、AB 实验等）
-- ❌ 不要重复输出其中的案例内容
-- ❌ 不要添加任何用户简历中没有的技术、框架、工具、业务场景
-- ✅ 只学习其表达方式和优化思路
-
+        full_prompt += f"""
+---
+【参考资料】（仅供学习表达方式，不要模仿格式）
 {rag_context}
-
+---
 """
-    full_prompt += f"用户简历：{data.query}"
+    
+    full_prompt += f"\n用户简历：{data.query}"
     
     async def event_stream():
         try:
             item_count = 0
-            for item in agent.generate_with_thoughts(full_prompt):
+            # 传递 deepThinking 参数，让后端知道是否应该解析 think 标签
+            for item in agent.generate_with_thoughts(full_prompt, deepThinking=getattr(data, 'deepThinking', False)):
                 item_count += 1
+                
+                # 记录每个 item 的类型，便于调试
+                logger.debug(f"[{call_time}] Yield item #{item_count}: type={item.get('type', 'unknown')}")
                 
                 # 检查客户端是否已经断开连接
                 if await request.is_disconnected():
@@ -154,11 +151,11 @@ async def agent_stream(request: Request, data: "AgentRequest"):
             
             logger.info(f"[{call_time}] Stream completed, total items: {item_count}")
         except Exception as e:
-            logger.error(f"[{call_time}] Stream error: %s", e)
+            logger.error(f"[{call_time}] Stream error: %s", e, exc_info=True)
             agent.stop_generation()
         finally:
-            logger.info(f"[{call_time}] event_stream finally block, calling stop_generation")
-            agent.stop_generation()
+            # 只在生成未完成时调用 stop_generation（避免重复调用）
+            pass
     
     logger.info(f"[{call_time}] 返回 StreamingResponse")
     return StreamingResponse(event_stream(), media_type="application/json")

@@ -1,18 +1,26 @@
+# Web Framework
 fastapi
-uvicorn
+uvicorn[standard]
+python-multipart
+# Pydantic
 pydantic
 pydantic-settings
-python-multipart
-openai
-requests
+# LLM & Transformers
 transformers
 torch
+accelerate
+bitsandbytes
 peft
 datasets
-bitsandbytes
-python-dotenv
+# Embedding & Vector Search
 sentence-transformers
 faiss-cpu
-numpy
+# API Clients
+openai
+requests
+# Document Processing
 PyPDF2
 python-docx
+# Utilities
+python-dotenv
+numpy
