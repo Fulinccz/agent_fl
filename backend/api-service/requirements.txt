@@ -24,3 +24,8 @@ python-docx
 # Utilities
 python-dotenv
 numpy
+# QLoRA 微调（可选）
+tensorboard
+wandb
+rouge-score
+bert-score

@@ -614,14 +614,28 @@ class LocalProvider(BaseProvider):
             prefix_patterns = [
                 r'\s*assistant\s*', 
                 r'\s*Assistant\s*',
-                r'\s*AI助手\s*',
-                r'\s*回复[：:]\s*',
-                r'\s*回答[：:]\s*',
+                r'\s*AI 助手\s*',
+                r'\s*回复 [：:]\s*',
+                r'\s*回答 [：:]\s*',
             ]
             
             cleaned = full_text
             for pattern in prefix_patterns:
                 cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
+            
+            # 去掉 <think>标签（防止模型自己输出）
+            cleaned = re.sub(r'<think>.*?</think>', '', cleaned, flags=re.DOTALL)
+            
+            # 去掉结尾的 "Answer." 或类似后缀
+            suffix_patterns = [
+                r'\n?\s*Answer\.?\s*$',
+                r'\n?\s*Answer:[^\n]*$',
+                r'\n?\s*答案 [：:][^\n]*$',
+                r'\n?\s*Final Answer[：:][^\n]*$',
+            ]
+            
+            for pattern in suffix_patterns:
+                cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE | re.MULTILINE)
             
             # 清理多余空白
             cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
