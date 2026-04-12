@@ -55,7 +55,7 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 		})
 	})
 
-	// API路由组
+	// API 路由组
 	api := r.Group("/api")
 	{
 		// Agent 相关路由
@@ -66,12 +66,11 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			agent.POST("/upload", proxy.PythonProxy()) // 文件上传
 		}
 
-		// 未来扩展：更多 API 路由
-		// resume := api.Group("/resume")
-		// {
-		//     resume.POST("/parse", ...)
-		//     resume.POST("/optimize", ...)
-		// }
+		// 简历解析路由
+		resume := api.Group("/resume")
+		{
+			resume.POST("/parse", proxy.PythonProxy())
+		}
 	}
 
 	return r

@@ -1,7 +1,7 @@
 import React, { useState, Suspense, useCallback } from 'react';
 import './App.css';
 
-// 导入新架构组件和Hooks
+// 导入新架构组件和 Hooks
 import { ChatInput, ChatOutput, ThoughtProcess } from './components/chat';
 import { Modal } from './components/common';
 import { useAbortController, useSubmitControl } from './hooks/useAbortController';
@@ -22,7 +22,7 @@ function App() {
   
   const { abortController, create, abort, reset: resetAbort } = useAbortController();
   const { canSubmit, markSubmitting, recordStopTime } = useSubmitControl();
-  const { thoughts, response, isStreaming, startStream, clearOutput } = useStreamResponse();
+  const { thoughts, response, isStreaming, startStream, clearOutput, setResponse, setIsStreaming, addThought } = useStreamResponse();
   const { uploadedFile, handleFileSelect, clearFile } = useFileUpload();
 
   const handleSubmit = useCallback(async (e?: React.FormEvent) => {
@@ -38,9 +38,26 @@ function App() {
     
     try {
       if (uploadedFile) {
-        await agentService.uploadAndProcess(
+        setIsStreaming(true);
+        // 使用流式接口处理文件上传
+        await agentService.uploadAndProcessStream(
           { file: uploadedFile, query },
-          controller.signal
+          controller.signal,
+          (content) => {
+            setResponse(prev => prev + content);
+          },
+          (error) => {
+            console.error('Stream error:', error);
+            setResponse(prev => prev + `\n❌ 错误：${error}`);
+          },
+          () => {
+            // 完成回调
+            console.log('Stream completed');
+          },
+          (thought) => {
+            // 思考过程回调
+            addThought(thought);
+          }
         );
       } else {
         await startStream(query, controller.signal, deepThinking);
@@ -48,12 +65,14 @@ function App() {
     } catch (error) {
       if (error instanceof Error && error.name !== 'AbortError') {
         console.error('Error:', error);
+        // 错误已经在流式回调中处理
       }
     } finally {
       markSubmitting(false);
+      setIsStreaming(false);
       clearFile();
     }
-  }, [query, uploadedFile, canSubmit, markSubmitting, clearOutput, create, startStream, clearFile]);
+  }, [query, uploadedFile, canSubmit, markSubmitting, clearOutput, create, startStream, clearFile, setResponse, setIsStreaming, addThought]);
 
   const handleStop = useCallback(() => {
     recordStopTime();

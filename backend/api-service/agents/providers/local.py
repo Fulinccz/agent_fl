@@ -1,19 +1,5 @@
 """
 Local Provider - 本地模型提供者
-
-职责：
-- 使用 transformers 库加载和运行本地模型
-- 实现文本生成、流式生成、停止控制等核心接口
-- 提供模型生命周期管理
-
-设计原则：
-- 继承 BaseProvider，实现统一的提供者接口
-- 只负责模型交互，不包含业务逻辑
-- 通过属性访问 services 层的业务功能
-
-集成：
-- 可被 Tool、Service、Agent 层调用
-- 支持 LangChain 自定义 LLM 包装
 """
 
 from __future__ import annotations
@@ -22,6 +8,15 @@ import torch
 import re
 import time
 import threading
+import os
+import logging as py_logging
+from transformers.utils import logging as transformers_logging
+
+# 抑制 transformers 的警告
+transformers_logging.set_verbosity_error()
+py_logging.getLogger("transformers.modeling_utils").setLevel(py_logging.ERROR)
+py_logging.getLogger("transformers.configuration_utils").setLevel(py_logging.ERROR)
+
 from ..core.base_provider import BaseProvider
 from pathlib import Path
 from typing import Optional, List, Dict, Generator, Any
@@ -74,90 +69,8 @@ class LocalProvider(BaseProvider):
             self._load_model()
         else:
             raise FileNotFoundError(
-                f"本地模型路径不存在: {model_path}. 仅支持 ai/models 目录下模型。"
+                f"本地模型路径不存在：{model_path}. 仅支持 ai/models 目录下模型。"
             )
-
-    def _load_model(self):
-        """加载本地模型"""
-        if pipeline is None:
-            raise RuntimeError("transformers 库未安装，请安装 transformers 并重试")
-
-        try:
-            logger.info(f"Loading model with {self._device.upper()}...")
-            
-            # 检查是否支持 bitsandbytes 4bit 量化
-            # 注意：bitsandbytes 在 Windows 上支持有限，需要特殊处理
-            use_4bit = True  # 默认尝试 4bit 量化
-            is_windows = torch.cuda.is_available() and torch.version.cuda is not None
-            
-            if is_windows:
-                import platform
-                if platform.system() == "Windows":
-                    logger.info("⚠️ 检测到 Windows 系统，bitsandbytes 4bit 量化可能不支持")
-                    logger.info("将尝试使用标准精度加载，或使用 CPU 模式")
-                    use_4bit = False  # Windows 默认不使用 4bit 量化
-            
-            if use_4bit and BitsAndBytesConfig is not None:
-                try:
-                    # 配置 4bit 量化参数
-                    quantization_config = BitsAndBytesConfig(
-                        load_in_4bit=True,
-                        bnb_4bit_quant_type="nf4",  # Normal Float 4bit
-                        bnb_4bit_compute_dtype=torch.float16 if self._device == "cuda" else torch.float32,
-                        bnb_4bit_use_double_quant=True,  # 嵌套量化，进一步节省显存
-                    )
-                    
-                    logger.info("✅ 使用 bitsandbytes 4bit 量化加载模型")
-                    logger.info(f"  - 量化类型：nf4")
-                    logger.info(f"  - 计算精度：{quantization_config.bnb_4bit_compute_dtype}")
-                    logger.info(f"  - 嵌套量化：启用")
-                    
-                    # 使用 4bit 量化加载模型
-                    self.transformers_pipeline = pipeline(
-                        "text-generation",
-                        model=self.local_model_path,
-                        tokenizer=self.local_model_path,
-                        trust_remote_code=True,
-                        device_map="auto",
-                        low_cpu_mem_usage=True,
-                        quantization_config=quantization_config,
-                    )
-                    
-                    logger.info("✅ 4bit 量化模型加载成功")
-                    logger.info(f"📊 模型设备：{self.transformers_pipeline.model.device}")
-                    logger.info(f"💾 模型 dtype: {self.transformers_pipeline.model.dtype}")
-                    return
-                    
-                except Exception as e:
-                    logger.warning(f"⚠️ 4bit 量化加载失败：{e}")
-                    logger.info("回退到标准精度加载模式")
-            
-            # 标准精度加载（回退方案）
-            logger.info("使用标准精度加载模型")
-            
-            # 优化模型加载配置
-            model_kwargs = {
-                "trust_remote_code": True,
-                "device_map": "auto",  # 自动选择设备
-                "low_cpu_mem_usage": True,  # 优化 CPU 内存使用
-                "torch_dtype": torch.float16 if torch.cuda.is_available() else torch.float32,  # 自动使用 float16
-            }
-            
-            self.transformers_pipeline = pipeline(
-                "text-generation",
-                model=self.local_model_path,
-                tokenizer=self.local_model_path,
-                **model_kwargs,
-            )
-            logger.info("Using local transformers model: %s (device: %s)", 
-                       self.local_model_path, self._device)
-            logger.info(f"📊 模型设备：{self.transformers_pipeline.model.device}")
-            logger.info(f"💾 模型 dtype: {self.transformers_pipeline.model.dtype}")
-        except Exception as e:
-            logger.exception("Failed to initialize transformers local model: %s", 
-                           self.local_model_path)
-            raise RuntimeError(f"Failed to initialize transformers local model "
-                             f"({self.local_model_path}): {e}") from e
 
     @property
     def model_name(self) -> str:
@@ -168,6 +81,64 @@ class LocalProvider(BaseProvider):
     def device(self) -> str:
         """返回当前设备信息"""
         return self._device
+
+    def _load_model(self):
+        """加载本地模型"""
+        if pipeline is None:
+            raise ImportError("transformers 库未安装，无法加载本地模型")
+
+        try:
+            logger.info(f"正在加载本地模型：{self.local_model_path}")
+            start_time = time.time()
+
+            # 加载 tokenizer
+            tokenizer = AutoTokenizer.from_pretrained(
+                self.local_model_path,
+                trust_remote_code=True,
+                use_fast=True
+            )
+
+            # 配置 4bit 量化
+            if torch.cuda.is_available():
+                quantization_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.float16,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_use_double_quant=True
+                )
+
+                # 加载模型
+                model = AutoModelForCausalLM.from_pretrained(
+                    self.local_model_path,
+                    trust_remote_code=True,
+                    device_map="auto",
+                    torch_dtype=torch.float16,
+                    quantization_config=quantization_config,
+                    low_cpu_mem_usage=True
+                )
+            else:
+                # CPU 模式
+                model = AutoModelForCausalLM.from_pretrained(
+                    self.local_model_path,
+                    trust_remote_code=True,
+                    device_map="cpu",
+                    torch_dtype=torch.float32,
+                    low_cpu_mem_usage=True
+                )
+
+            # 创建 pipeline
+            self.transformers_pipeline = pipeline(
+                "text-generation",
+                model=model,
+                tokenizer=tokenizer
+            )
+
+            elapsed = time.time() - start_time
+            logger.info(f"✅ 本地模型加载完成，耗时：{elapsed:.2f}秒")
+
+        except Exception as e:
+            logger.error(f"本地模型加载失败：{e}")
+            raise
 
     @property
     def resume_service(self):
@@ -226,36 +197,70 @@ class LocalProvider(BaseProvider):
         if self.transformers_pipeline is None:
             raise RuntimeError("本地模型尚未加载，无法执行生成。")
 
-        timeout = kwargs.get('timeout', 300)
+        timeout = kwargs.get('timeout', 600)
 
         def _generate_task(prompt, **gen_kwargs):
             tokenizer = self.transformers_pipeline.tokenizer
             inputs = tokenizer(prompt, return_tensors="pt")
 
+            max_new_tokens = gen_kwargs.get("max_new_tokens", 128)
             generate_kwargs = {
                 **inputs,
                 "pad_token_id": tokenizer.eos_token_id,
                 "temperature": gen_kwargs.get("temperature", 0.35),
-                "max_new_tokens": gen_kwargs.get("max_new_tokens", 1024),
+                "max_new_tokens": max_new_tokens,
                 "repetition_penalty": 1.2,
                 "top_p": 0.9,
                 "top_k": 40,
                 "do_sample": True,
             }
-
+            
+            start_time = time.time()
             outputs = self.transformers_pipeline.model.generate(**generate_kwargs)
+            elapsed = time.time() - start_time
+            
             result = tokenizer.decode(outputs[0], skip_special_tokens=True)
             return result
 
         try:
+            start_wait = time.time()
             with ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(_generate_task, prompt, **kwargs)
                 result = future.result(timeout=timeout)
+                elapsed_wait = time.time() - start_wait
+                logger.debug(f"生成完成，耗时：{elapsed_wait:.2f}秒")
                 return result
         except TimeoutError:
+            elapsed_wait = time.time() - start_wait
+            logger.error(f"模型推理超时，已等待 {elapsed_wait:.2f}秒")
             raise RuntimeError(f"模型推理超时，超过了 {timeout} 秒的限制")
         except Exception as e:
-            raise RuntimeError(f"Local transformers 生成失败: {e}") from e
+            logger.error(f"生成失败：{e}")
+            raise RuntimeError(f"Local transformers 生成失败：{e}") from e
+
+    def generate_with_thoughts(
+        self, 
+        prompt: str, 
+        **kwargs
+    ) -> Generator[Dict[str, Any], None, None]:
+        """
+        流式生成文本，支持思考过程
+        
+        Yields:
+            包含 type 和 content 的字典
+        """
+        yield from self.generate_stream(prompt, **kwargs)
+    
+    def generate_with_image(
+        self, 
+        prompt: str, 
+        image_path: str, 
+        **kwargs
+    ) -> str:
+        """
+        生成带图片的响应（当前不支持）
+        """
+        raise NotImplementedError("本地模型暂不支持图片输入")
 
     def _filter_think_content(self, content: str) -> str:
         """过滤思考内容中的 Prompt 指令重复"""
@@ -315,80 +320,55 @@ class LocalProvider(BaseProvider):
                 full_text += before
                 outputs.append({"type": "token", "content": before, "full_text": full_text})
             
-            # 检查同一 token 中是否有 </think>
-            remaining = parts[1] if len(parts) > 1 else ""
-            if "</think>" in remaining:
-                # 同一个 token 中有完整的 think 标签
-                think_parts = remaining.split("</think>", 1)
-                if think_parts[0].strip():
-                    filtered_content = self._filter_think_content(think_parts[0].strip())
-                    if filtered_content:
-                        outputs.append({"type": "thought", "content": filtered_content})
-                after = think_parts[1] if len(think_parts) > 1 else ""
-                if after.strip():
-                    full_text += after
-                    outputs.append({"type": "token", "content": after, "full_text": full_text})
-            else:
-                # 进入 think 模式，保存剩余内容到 buffer
-                in_think_tag = True
-                if remaining:
-                    think_buffer += remaining
-                    
-        elif "</think>" in token and in_think_tag:
-            # 检测 </think> 结束标签
+            # 进入 think 标签
+            in_think_tag = True
+            think_buffer = parts[1]
+            
+            return in_think_tag, think_buffer, full_text, outputs
+        
+        # 检测 </think> 结束标签
+        if "</think>" in token and in_think_tag:
             parts = token.split("</think>", 1)
+            
+            # 完成 think 标签
             think_buffer += parts[0]
             
+            # 输出思考内容
             if think_buffer.strip():
-                filtered_content = self._filter_think_content(think_buffer.strip())
-                if filtered_content:
-                    outputs.append({"type": "thought", "content": filtered_content})
+                outputs.append({
+                    "type": "thought",
+                    "content": self._filter_think_content(think_buffer.strip())
+                })
             
-            think_buffer = ""
+            # 重置状态
             in_think_tag = False
+            think_buffer = ""
             
-            # </think> 之后的内容作为普通文本
-            after = parts[1] if len(parts) > 1 else ""
+            # </think> 标签之后的内容作为普通文本
+            after = parts[1]
             if after.strip():
                 full_text += after
                 outputs.append({"type": "token", "content": after, "full_text": full_text})
-                
-        elif in_think_tag:
-            # 在 think 标签内，累积内容
+            
+            return in_think_tag, think_buffer, full_text, outputs
+        
+        # 普通 token 处理
+        if in_think_tag:
+            # 在 think 标签内，累积到缓冲区
             think_buffer += token
-            # 遇到换行或积累足够内容时输出（避免逐 token 碎片化显示）
-            # 但要检查是否包含 </think> 结束标签
-            if '\n' in token or len(think_buffer) >= 30:
-                # 先检查 buffer 中是否有 </think>
-                if "</think>" in think_buffer:
-                    # buffer 中有结束标签，需要分割处理
-                    think_parts = think_buffer.split("</think>", 1)
-                    if think_parts[0].strip():
-                        filtered_content = self._filter_think_content(think_parts[0].strip())
-                        if filtered_content:
-                            outputs.append({"type": "thought", "content": filtered_content})
-                    
-                    think_buffer = ""
-                    in_think_tag = False
-                    
-                    # </think> 之后的内容作为普通文本
-                    if len(think_parts) > 1 and think_parts[1].strip():
-                        full_text += think_parts[1]
-                        outputs.append({"type": "token", "content": think_parts[1], "full_text": full_text})
-                else:
-                    # 没有结束标签，正常输出思考内容
-                    filtered_content = self._filter_think_content(think_buffer)
-                    if filtered_content:
-                        outputs.append({"type": "thought", "content": filtered_content})
-                    think_buffer = ""
         else:
-            # 普通文本（不在 think 标签内）
+            # 在 think 标签外，直接输出
             full_text += token
             outputs.append({"type": "token", "content": token, "full_text": full_text})
         
         return in_think_tag, think_buffer, full_text, outputs
 
-    def generate_with_thoughts(self, prompt: str, **kwargs):
+    def generate_stream(
+        self,
+        prompt: str,
+        images: Optional[List[str]] = None,
+        **kwargs
+    ) -> Generator[Dict[str, Any], None, None]:
         """
         流式生成带思考过程的内容
         
@@ -463,16 +443,13 @@ class LocalProvider(BaseProvider):
                 "early_stopping": False,  # 不要提前停止
             }
             
-            logger.info(f"🔍 开始模型生成 - prompt 长度：{len(prompt)} 字符")
-            logger.info(f"📊 输入 token 数：{inputs['input_ids'].shape[1]}")
-            logger.info(f"⚙️  生成参数：max_new_tokens={generate_kwargs['max_new_tokens']}, temperature={generate_kwargs['temperature']}")
-            logger.info(f"💻 模型设备：{self.transformers_pipeline.model.device}")
-            logger.info(f"💾 模型 dtype: {self.transformers_pipeline.model.dtype}")
+            logger.info(f"开始模型生成 - prompt 长度：{len(prompt)} 字符")
+            logger.info(f"输入 prompt 前 200 字符：{prompt[:200]}")
+            logger.info(f"生成参数：max_new_tokens={generate_kwargs['max_new_tokens']}, temperature={generate_kwargs['temperature']}")
             
             # 重要：确保模型处于 eval 模式，禁用 dropout
             self.transformers_pipeline.model.eval()
             
-            logger.info("🚀 启动生成线程...")
             thread = threading.Thread(
                 target=self.transformers_pipeline.model.generate,
                 kwargs=generate_kwargs,
@@ -480,7 +457,7 @@ class LocalProvider(BaseProvider):
             )
             self._generate_thread = thread
             thread.start()
-            logger.info("✅ 生成线程已启动")
+            logger.info("生成线程已启动")
             
             # 监控线程状态
             time.sleep(0.5)
@@ -587,76 +564,45 @@ class LocalProvider(BaseProvider):
                 
             except Exception as e:
                 elapsed_time = time.time() - start_time
-                logger.error(f"❌ 生成异常：{type(e).__name__}: {e} (耗时：{elapsed_time:.2f}s, token 数：{token_count})", exc_info=True)
-                yield {"type": "error", "content": f"模型生成失败：{str(e)}"}
-            finally:
-                # 清理资源
-                self._streamer = None
-                self._generate_thread = None
-                logger.debug("🧹 生成资源已清理")
-                    
-            if self._stop_generation:
-                yield {"type": "thought", "content": "用户已中止生成"}
-                return
-            
-            thread.join(timeout=5)
-            
-            if self._stop_generation:
-                yield {"type": "thought", "content": "用户已中止生成"}
-                return
-            
-            if think_buffer.strip():
-                yield {"type": "thought", "content": think_buffer.strip()}
-            
-            full_text = re.sub(r'', '', full_text)
-            
-            # 清理所有位置的角色前缀（开头、中间、结尾）
-            prefix_patterns = [
-                r'\s*assistant\s*', 
-                r'\s*Assistant\s*',
-                r'\s*AI 助手\s*',
-                r'\s*回复 [：:]\s*',
-                r'\s*回答 [：:]\s*',
-            ]
-            
-            cleaned = full_text
-            for pattern in prefix_patterns:
-                cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
-            
-            # 去掉 <think>标签（防止模型自己输出）
-            cleaned = re.sub(r'<think>.*?</think>', '', cleaned, flags=re.DOTALL)
-            
-            # 去掉结尾的 "Answer." 或类似后缀
-            suffix_patterns = [
-                r'\n?\s*Answer\.?\s*$',
-                r'\n?\s*Answer:[^\n]*$',
-                r'\n?\s*答案 [：:][^\n]*$',
-                r'\n?\s*Final Answer[：:][^\n]*$',
-            ]
-            
-            for pattern in suffix_patterns:
-                cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE | re.MULTILINE)
-            
-            # 清理多余空白
-            cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
-            
-            yield {"type": "complete", "full_text": cleaned}
-            
+                logger.error(f"❌ 流式生成异常：{e}, 已耗时：{elapsed_time:.2f}秒")
+                if not self._stop_generation:
+                    yield {"type": "error", "content": f"生成异常：{str(e)}"}
+                
         except Exception as e:
-            logger.error(f"流式生成失败: {e}")
-            if any(keyword in str(e).lower() 
-                  for keyword in ["abort", "stop"]):
-                yield {"type": "thought", "content": "用户已中止生成"}
-            else:
-                yield {"type": "error", "content": f"Local transformers 生成失败: {str(e)}"}
+            logger.error(f"❌ 流式生成失败：{e}")
+            yield {"type": "error", "content": f"流式生成失败：{str(e)}"}
+            
         finally:
-            self._stop_generation = True
+            # 清理状态
             self._streamer = None
-
-    def generate_with_image(self, prompt: str, image_path: str, **kwargs) -> str:
-        """当前本地模型仅支持文本推理。"""
-        raise NotImplementedError("本地模型当前仅支持文本输入，暂不支持图像生成。")
+            self._generate_thread = None
 
 
-# 向后兼容：保留 LocalAgent 作为 LocalProvider 的别名
-LocalAgent = LocalProvider
+class LocalAgent:
+    """
+    Local Agent - 向后兼容的适配器类
+    
+    此类是为了与旧代码兼容而保留
+    实际功能由 LocalProvider 实现
+    """
+    
+    def __init__(self, model_name: str = "model_serving"):
+        """Initialize local agent."""
+        self.provider = LocalProvider(model_name=model_name)
+    
+    def generate(self, prompt: str, images: Optional[List[str]] = None, **kwargs) -> str:
+        """Generate text using local model."""
+        return self.provider.generate(prompt, images, **kwargs)
+    
+    def generate_stream(
+        self, 
+        prompt: str, 
+        images: Optional[List[str]] = None, 
+        **kwargs
+    ) -> Generator[Dict[str, Any], None, None]:
+        """Generate text with streaming."""
+        yield from self.provider.generate_stream(prompt, images, **kwargs)
+    
+    def stop_generation(self):
+        """Stop current generation."""
+        self.provider.stop_generation()

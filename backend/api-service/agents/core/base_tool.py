@@ -147,9 +147,14 @@ class ToolRegistry:
         Returns:
             工具实例，如果不存在返回 None
         """
+        from logger import get_logger
+        logger = get_logger(__name__)
+        
         tool_class = cls._tools.get(name)
         if tool_class:
+            logger.info(f"获取工具：{name}")
             return tool_class(provider=provider)
+        logger.warning(f"工具未找到：{name}")
         return None
     
     @classmethod

@@ -13,7 +13,7 @@ export default defineConfig({
     proxy: {
       // 本地开发：将 /api 转发到后端网关
       '/api': {
-        target: 'http://localhost:8080',
+        target: 'http://localhost:8001',
         changeOrigin: true,
         secure: false,
       },

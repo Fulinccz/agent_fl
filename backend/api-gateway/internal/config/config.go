@@ -20,6 +20,7 @@ type PythonConfig struct {
 	BaseURL         string
 	AgentPath       string
 	AgentStreamPath string
+	ResumePath      string
 }
 
 func LoadConfig() (*Config, error) {
@@ -31,9 +32,10 @@ func LoadConfig() (*Config, error) {
 
 	// 设置默认值（本地开发默认 localhost，Docker 环境可通过环境变量覆盖）
 	viper.SetDefault("server.port", "8080")
-	viper.SetDefault("python.baseURL", "http://localhost:8000")
+	viper.SetDefault("python.baseURL", "http://localhost:8001")
 	viper.SetDefault("python.agentPath", "/api/agent")
 	viper.SetDefault("python.agentStreamPath", "/api/agent/stream")
+	viper.SetDefault("python.resumePath", "/api/resume")
 
 	// 从环境变量读取（PYTHON_BASEURL / PYTHON_AGENTPATH 等）
 	viper.AutomaticEnv()

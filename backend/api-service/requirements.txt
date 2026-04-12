@@ -21,6 +21,7 @@ requests
 # Document Processing
 PyPDF2
 python-docx
+mammoth
 # Utilities
 python-dotenv
 numpy

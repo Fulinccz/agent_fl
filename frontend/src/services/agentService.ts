@@ -40,6 +40,28 @@ class AgentService {
     const result = await apiClient.uploadFile(request, signal);
     return result.response;
   }
+
+  async uploadAndProcessStream(
+    request: UploadRequest,
+    signal?: AbortSignal,
+    onContent?: (content: string) => void,
+    onError?: (error: string) => void,
+    onComplete?: () => void,
+    onThought?: (content: string) => void
+  ): Promise<void> {
+    return apiClient.uploadFileStreaming(
+      request,
+      signal,
+      (response) => {
+        if (onContent) onContent(response);
+      },
+      (error) => {
+        if (onError) onError(error);
+      },
+      onComplete,
+      onThought
+    );
+  }
 }
 
 export const agentService = new AgentService();

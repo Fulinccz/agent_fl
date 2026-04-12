@@ -26,12 +26,15 @@ type StreamProxyConfig struct {
 	BufferSize    int // 缓冲区大小（默认 4096）
 }
 
-// PythonStreamProxy 返回流式代理到Python服务的中间件
+// PythonStreamProxy 返回流式代理到 Python 服务的中间件
 func PythonStreamProxy() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// 根据请求路径动态选择目标路径
+		targetPath := c.Request.URL.Path
+
 		config := StreamProxyConfig{
 			TargetBaseURL: appConfig.Python.BaseURL,
-			TargetPath:    appConfig.Python.AgentStreamPath,
+			TargetPath:    targetPath,
 			BufferSize:    4096,
 		}
 

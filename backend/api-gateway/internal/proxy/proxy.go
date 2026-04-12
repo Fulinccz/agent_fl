@@ -93,12 +93,15 @@ func CopyResponse(c *gin.Context, proxyResp *ProxyResponse) {
 	io.Copy(c.Writer, proxyResp.Body)
 }
 
-// PythonProxy 返回代理到Python服务的中间件（非流式）
+// PythonProxy 返回代理到 Python 服务的中间件（非流式）
 func PythonProxy() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// 根据请求路径动态选择目标路径
+		targetPath := c.Request.URL.Path
+
 		config := ProxyConfig{
 			TargetBaseURL: appConfig.Python.BaseURL,
-			TargetPath:    appConfig.Python.AgentPath,
+			TargetPath:    targetPath,
 			Method:        c.Request.Method,
 			StreamMode:    false,
 		}

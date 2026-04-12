@@ -49,7 +49,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
           onKeyDown={handleKeyDown}
           placeholder="请发送消息~"
           disabled={disabled || isLoading}
-          rows={3}
+          rows={5}
         />
       </div>
       
@@ -79,12 +79,13 @@ const ChatInput: React.FC<ChatInputProps> = ({
             <label 
               className={`attachment-button${isLoading ? ' disabled' : ''}`}
               style={{ opacity: isLoading ? 0.5 : 1, cursor: isLoading ? 'not-allowed' : 'pointer' }}
+              title="仅支持 .docx 和 .pdf 格式"
             >
               <input
                 type="file"
                 onChange={onFileChange}
                 className="file-upload"
-                accept=".pdf,.doc,.docx,.txt,.jpg,.png"
+                accept=".pdf,.docx"
                 disabled={isLoading}
               />
               📎

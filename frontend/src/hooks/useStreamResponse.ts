@@ -12,6 +12,9 @@ interface UseStreamResponseReturn {
   isStreaming: boolean;
   startStream: (query: string, signal?: AbortSignal, deepThinking?: boolean) => Promise<void>;
   clearOutput: () => void;
+  setResponse: (response: string) => void;
+  setIsStreaming: (isStreaming: boolean) => void;
+  addThought: (thought: string) => void;
 }
 
 export function useStreamResponse(
@@ -66,12 +69,20 @@ export function useStreamResponse(
     thoughtsRef.current = [];
   }, []);
 
+  const addThought = useCallback((thought: string) => {
+    thoughtsRef.current.push(thought);
+    setThoughts([...thoughtsRef.current]);
+  }, []);
+
   return {
     thoughts,
     response,
     isStreaming,
     startStream,
-    clearOutput
+    clearOutput,
+    setResponse,
+    setIsStreaming,
+    addThought
   };
 }
 

@@ -18,7 +18,17 @@ export function useFileUpload(): UseFileUploadReturn {
 
   const handleFileSelect = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files[0]) {
-      setUploadedFile(event.target.files[0]);
+      const file = event.target.files[0];
+      const validTypes = ['.pdf', '.docx'];
+      const fileExtension = '.' + file.name.split('.').pop()?.toLowerCase();
+      
+      if (!validTypes.includes(fileExtension)) {
+        setUploadError('仅支持 .docx 和 .pdf 格式的文件');
+        event.target.value = ''; // 清空文件选择
+        return;
+      }
+      
+      setUploadedFile(file);
       setUploadError(null);
     }
   }, []);
