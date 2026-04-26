@@ -2,12 +2,11 @@ import React, { useState, Suspense, useCallback } from 'react';
 import './App.css';
 
 // 导入新架构组件和 Hooks
-import { ChatInput, ChatOutput, ThoughtProcess } from './components/chat';
+import { ChatInput, ChatOutput } from './components/chat';
 import { Modal } from './components/common';
 import { useAbortController, useSubmitControl } from './hooks/useAbortController';
 import { useStreamResponse } from './hooks/useStreamResponse';
 import { useFileUpload } from './hooks/useFileUpload';
-import { agentService } from './services/agentService';
 import Logo from './assets/readyInClient/react.svg';
 
 const NonCriticalComponent = React.lazy(() => 
@@ -18,11 +17,21 @@ function App() {
   const [showMore, setShowMore] = useState(false);
   const [showNewChatModal, setShowNewChatModal] = useState(false);
   const [query, setQuery] = useState('');
-  const [deepThinking, setDeepThinking] = useState(false);
+  const [jd, setJd] = useState(''); // JD 输入
   
-  const { abortController, create, abort, reset: resetAbort } = useAbortController();
+  const { create, abort, reset: resetAbort } = useAbortController();
   const { canSubmit, markSubmitting, recordStopTime } = useSubmitControl();
-  const { thoughts, response, isStreaming, startStream, clearOutput, setResponse, setIsStreaming, addThought } = useStreamResponse();
+  
+  // 使用新的 useStreamResponse - 返回 score, suggestions, polished
+  const { 
+    score, 
+    suggestions, 
+    polished, 
+    isStreaming, 
+    startStream, 
+    clearOutput 
+  } = useStreamResponse();
+  
   const { uploadedFile, handleFileSelect, clearFile } = useFileUpload();
 
   const handleSubmit = useCallback(async (e?: React.FormEvent) => {
@@ -38,41 +47,28 @@ function App() {
     
     try {
       if (uploadedFile) {
-        setIsStreaming(true);
-        // 使用流式接口处理文件上传
-        await agentService.uploadAndProcessStream(
-          { file: uploadedFile, query },
-          controller.signal,
-          (content) => {
-            setResponse(prev => prev + content);
-          },
-          (error) => {
-            console.error('Stream error:', error);
-            setResponse(prev => prev + `\n❌ 错误：${error}`);
-          },
-          () => {
-            // 完成回调
-            console.log('Stream completed');
-          },
-          (thought) => {
-            // 思考过程回调
-            addThought(thought);
-          }
-        );
+        // 文件上传处理 - 读取文件内容
+        const fileContent = await uploadedFile.text();
+        await startStream({
+          resume: fileContent,
+          jd: jd || undefined
+        }, controller.signal);
       } else {
-        await startStream(query, controller.signal, deepThinking);
+        // 直接优化简历
+        await startStream({
+          resume: query,
+          jd: jd || undefined
+        }, controller.signal);
       }
     } catch (error) {
       if (error instanceof Error && error.name !== 'AbortError') {
         console.error('Error:', error);
-        // 错误已经在流式回调中处理
       }
     } finally {
       markSubmitting(false);
-      setIsStreaming(false);
       clearFile();
     }
-  }, [query, uploadedFile, canSubmit, markSubmitting, clearOutput, create, startStream, clearFile, setResponse, setIsStreaming, addThought]);
+  }, [query, jd, uploadedFile, canSubmit, markSubmitting, clearOutput, create, startStream, clearFile]);
 
   const handleStop = useCallback(() => {
     recordStopTime();
@@ -83,17 +79,41 @@ function App() {
     setShowNewChatModal(true);
   }, []);
 
-  const handleDeepThinkToggle = useCallback(() => {
-    setDeepThinking(prev => !prev);
-  }, []);
-
   const confirmNewChat = useCallback(() => {
     setQuery('');
+    setJd('');
     clearOutput();
     clearFile();
     resetAbort();
     setShowNewChatModal(false);
   }, [clearOutput, clearFile, resetAbort]);
+
+  // 格式化评分显示
+  const formatScore = () => {
+    if (!score) return '';
+    const { overall_score, scores } = score;
+    return `综合评分: ${overall_score?.score}分 (${overall_score?.rating})
+
+各维度评分:
+- 完整性: ${scores?.completeness}分
+- 专业度: ${scores?.professionalism}分  
+- 量化程度: ${scores?.quantification}分
+- 匹配度: ${scores?.matching}分`;
+  };
+
+  // 格式化建议显示
+  const formatSuggestions = () => {
+    if (!suggestions?.suggestions) return '';
+    return suggestions.suggestions.map((s: any, i: number) => 
+      `${i + 1}. [${s.category}] ${s.suggestion}${s.example ? '\n   示例: ' + s.example : ''}`
+    ).join('\n\n');
+  };
+
+  // 格式化润色结果显示
+  const formatPolished = () => {
+    if (!polished?.optimized_resume) return '';
+    return polished.optimized_resume;
+  };
 
   return (
     <div className="app">
@@ -103,32 +123,84 @@ function App() {
       </div>
       
       <form onSubmit={(e) => handleSubmit(e)} className="form">
-        <ChatInput
-          value={query}
-          onChange={setQuery}
-          onSubmit={() => handleSubmit()}
-          onStop={handleStop}
-          isLoading={isStreaming}
-          uploadedFile={uploadedFile}
-          onFileChange={handleFileSelect}
-          onNewChat={handleNewChat}
-          disabled={!canSubmit() && isStreaming}
-          deepThinking={deepThinking}
-          onDeepThinkToggle={handleDeepThinkToggle}
-        />
+        <div className="input-row">
+          {/* 简历输入框 */}
+          <div className="input-section">
+            <ChatInput
+              value={query}
+              onChange={setQuery}
+              onSubmit={() => handleSubmit()}
+              onStop={handleStop}
+              isLoading={isStreaming}
+              uploadedFile={uploadedFile}
+              onFileChange={handleFileSelect}
+              onNewChat={handleNewChat}
+              disabled={!canSubmit() && isStreaming}
+            />
+          </div>
+          
+          {/* JD 输入框 */}
+          <div className="input-section jd-section">
+            <div className="jd-input-wrapper">
+              <textarea
+                className="jd-input"
+                placeholder="目标岗位 JD（可选）"
+                value={jd}
+                onChange={(e) => setJd(e.target.value)}
+              />
+            </div>
+          </div>
+        </div>
       </form>
 
       <div className="output-container">
-        <ThoughtProcess 
-          thoughts={thoughts} 
-          isStopped={abortController?.signal.aborted || false}
-        />
+        {/* 分区1：简历评分 - 紧凑单行显示 */}
+        <div className="output-section score-section">
+          <div className="score-header">
+            <div className="score-title-group">
+              <span className="section-icon">📊</span>
+              <span className="section-title">简历评分</span>
+            </div>
+            {score ? (
+              <div className="score-display">
+                <span className="score-number">{score.overall_score?.score}</span>
+                <span className="score-rating">{score.overall_score?.rating}</span>
+              </div>
+            ) : (
+              <span className="score-placeholder">等待评分...</span>
+            )}
+          </div>
+        </div>
         
-        <ChatOutput
-          content={response}
-          title="📝 优化建议"
-          className="result-window"
-        />
+        {/* 分区2：优化建议 - 中等高度 */}
+        <div className="output-section suggestions-section">
+          <div className="section-header">
+            <span className="section-icon">💡</span>
+            <span className="section-title">优化建议</span>
+          </div>
+          <div className="section-content">
+            {suggestions ? (
+              <pre className="output-text suggestions-text">{formatSuggestions()}</pre>
+            ) : (
+              <div className="section-placeholder">等待优化建议...</div>
+            )}
+          </div>
+        </div>
+        
+        {/* 分区3：优化结果 - 最大高度 */}
+        <div className="output-section polished-section">
+          <div className="section-header">
+            <span className="section-icon">✨</span>
+            <span className="section-title">优化结果</span>
+          </div>
+          <div className="section-content">
+            {polished ? (
+              <pre className="output-text">{formatPolished()}</pre>
+            ) : (
+              <div className="section-placeholder">等待优化后的简历...</div>
+            )}
+          </div>
+        </div>
       </div>
 
       <button 
@@ -139,9 +211,11 @@ function App() {
       </button>
 
       {showMore && (
-        <Suspense fallback={<div className="loading">Loading...</div>}>
-          <NonCriticalComponent />
-        </Suspense>
+        <div className="details-container">
+          <Suspense fallback={<div className="loading">Loading...</div>}>
+            <NonCriticalComponent />
+          </Suspense>
+        </div>
       )}
 
       <Modal

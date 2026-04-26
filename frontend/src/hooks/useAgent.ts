@@ -1,19 +1,20 @@
 import { useState, useCallback, useRef } from 'react';
-import type { AgentRequest } from '../types';
+import type { ResumeOptimizeRequest } from '../types';
 import { agentService } from '../services/agentService';
 
 interface UseAgentOptions {
-  onThought?: (content: string) => void;
-  onContent?: (content: string) => void;
+  onScore?: (data: { overall_score: any; scores: any }) => void;
+  onSuggestions?: (data: { suggestions: any; match_analysis: any }) => void;
+  onPolished?: (data: { optimized_resume: string }) => void;
+  onComplete?: (data: any) => void;
   onError?: (error: string) => void;
-  onComplete?: () => void;
 }
 
 interface UseAgentReturn {
   isLoading: boolean;
   isStopped: boolean;
   error: string | null;
-  execute: (request: AgentRequest, signal?: AbortSignal) => Promise<void>;
+  execute: (request: ResumeOptimizeRequest, signal?: AbortSignal) => Promise<void>;
   stop: () => void;
   reset: () => void;
 }
@@ -26,7 +27,7 @@ export function useAgent(options: UseAgentOptions = {}): UseAgentReturn {
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const execute = useCallback(async (
-    request: AgentRequest,
+    request: ResumeOptimizeRequest,
     signal?: AbortSignal
   ) => {
     setIsLoading(true);
@@ -42,14 +43,19 @@ export function useAgent(options: UseAgentOptions = {}): UseAgentReturn {
     }
 
     try {
-      await agentService.streamQuery(
+      await agentService.optimizeResumeStream(
         request,
         controller.signal,
-        options.onThought,
-        options.onContent,
-        options.onError,
-        () => {
-          if (options.onComplete) options.onComplete();
+        options.onScore,
+        options.onSuggestions,
+        options.onPolished,
+        (data) => {
+          if (options.onComplete) options.onComplete(data);
+          setIsLoading(false);
+        },
+        (err) => {
+          if (options.onError) options.onError(err);
+          setError(err);
           setIsLoading(false);
         }
       );

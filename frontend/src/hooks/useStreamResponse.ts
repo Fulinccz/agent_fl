@@ -1,59 +1,69 @@
 import { useState, useCallback, useRef } from 'react';
 import { agentService } from '../services/agentService';
+import type { ResumeOptimizeRequest } from '../types';
 
 interface UseStreamResponseOptions {
-  onThoughtUpdate?: (thoughts: string[]) => void;
-  onResponseUpdate?: (response: string) => void;
+  onScoreUpdate?: (score: { overall_score: any; scores: any }) => void;
+  onSuggestionsUpdate?: (suggestions: { suggestions: any; match_analysis: any }) => void;
+  onPolishedUpdate?: (polished: { optimized_resume: string }) => void;
 }
 
 interface UseStreamResponseReturn {
-  thoughts: string[];
-  response: string;
+  score: { overall_score: any; scores: any } | null;
+  suggestions: { suggestions: any; match_analysis: any } | null;
+  polished: { optimized_resume: string } | null;
   isStreaming: boolean;
-  startStream: (query: string, signal?: AbortSignal, deepThinking?: boolean) => Promise<void>;
+  startStream: (request: ResumeOptimizeRequest, signal?: AbortSignal) => Promise<void>;
   clearOutput: () => void;
-  setResponse: (response: string) => void;
-  setIsStreaming: (isStreaming: boolean) => void;
-  addThought: (thought: string) => void;
 }
 
 export function useStreamResponse(
   options: UseStreamResponseOptions = {}
 ): UseStreamResponseReturn {
-  const [thoughts, setThoughts] = useState<string[]>([]);
-  const [response, setResponse] = useState('');
+  const [score, setScore] = useState<{ overall_score: any; scores: any } | null>(null);
+  const [suggestions, setSuggestions] = useState<{ suggestions: any; match_analysis: any } | null>(null);
+  const [polished, setPolished] = useState<{ optimized_resume: string } | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   
-  const responseRef = useRef('');
-  const thoughtsRef = useRef<string[]>([]);
+  const scoreRef = useRef<{ overall_score: any; scores: any } | null>(null);
+  const suggestionsRef = useRef<{ suggestions: any; match_analysis: any } | null>(null);
+  const polishedRef = useRef<{ optimized_resume: string } | null>(null);
 
   const startStream = useCallback(async (
-    query: string,
-    signal?: AbortSignal,
-    deepThinking: boolean = false
+    request: ResumeOptimizeRequest,
+    signal?: AbortSignal
   ) => {
-    setThoughts([]);
-    setResponse('');
-    responseRef.current = '';
-    thoughtsRef.current = [];
+    setScore(null);
+    setSuggestions(null);
+    setPolished(null);
+    scoreRef.current = null;
+    suggestionsRef.current = null;
+    polishedRef.current = null;
     setIsStreaming(true);
 
     try {
-      await agentService.streamQuery(
-        { query, deepThinking },
+      await agentService.optimizeResumeStream(
+        request,
         signal,
-        (content) => {
-          thoughtsRef.current.push(content);
-          setThoughts([...thoughtsRef.current]);
-          if (options.onThoughtUpdate) {
-            options.onThoughtUpdate(thoughtsRef.current);
+        (data) => {
+          scoreRef.current = data;
+          setScore(data);
+          if (options.onScoreUpdate) {
+            options.onScoreUpdate(data);
           }
         },
-        (content) => {
-          responseRef.current += content;
-          setResponse(responseRef.current);
-          if (options.onResponseUpdate) {
-            options.onResponseUpdate(responseRef.current);
+        (data) => {
+          suggestionsRef.current = data;
+          setSuggestions(data);
+          if (options.onSuggestionsUpdate) {
+            options.onSuggestionsUpdate(data);
+          }
+        },
+        (data) => {
+          polishedRef.current = data;
+          setPolished(data);
+          if (options.onPolishedUpdate) {
+            options.onPolishedUpdate(data);
           }
         }
       );
@@ -63,26 +73,21 @@ export function useStreamResponse(
   }, [options]);
 
   const clearOutput = useCallback(() => {
-    setThoughts([]);
-    setResponse('');
-    responseRef.current = '';
-    thoughtsRef.current = [];
-  }, []);
-
-  const addThought = useCallback((thought: string) => {
-    thoughtsRef.current.push(thought);
-    setThoughts([...thoughtsRef.current]);
+    setScore(null);
+    setSuggestions(null);
+    setPolished(null);
+    scoreRef.current = null;
+    suggestionsRef.current = null;
+    polishedRef.current = null;
   }, []);
 
   return {
-    thoughts,
-    response,
+    score,
+    suggestions,
+    polished,
     isStreaming,
     startStream,
-    clearOutput,
-    setResponse,
-    setIsStreaming,
-    addThought
+    clearOutput
   };
 }
 

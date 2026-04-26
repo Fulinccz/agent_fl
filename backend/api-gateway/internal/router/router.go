@@ -64,13 +64,28 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 			agent.POST("", proxy.PythonProxy())
 			agent.POST("/stream", proxy.PythonStreamProxy())
 			agent.POST("/upload", proxy.PythonProxy()) // 文件上传
+			agent.POST("/upload_stream", proxy.PythonStreamProxy()) // 文件上传流式
 		}
 
 		// 简历解析路由
 		resume := api.Group("/resume")
 		{
 			resume.POST("/parse", proxy.PythonProxy())
+			resume.POST("/optimize", proxy.PythonProxy())           // 多 Agent 简历优化
+			resume.POST("/optimize/stream", proxy.PythonStreamProxy()) // 多 Agent 简历优化流式
 		}
+
+		// 长对话 Chat 路由（LangGraph + Memory）
+		chat := api.Group("/chat")
+		{
+			chat.POST("", proxy.PythonProxy())           // 非流式对话
+			chat.POST("/stream", proxy.PythonStreamProxy()) // 流式对话
+			chat.GET("/sessions", proxy.PythonProxy())   // 获取会话列表
+		}
+		// 会话历史路由（需要单独处理路径参数）
+		api.GET("/chat/sessions/:session_id/history", proxy.PythonProxy())
+		api.DELETE("/chat/sessions/:session_id", proxy.PythonProxy())
+		api.DELETE("/chat/sessions/:session_id/clear", proxy.PythonProxy())
 	}
 
 	return r

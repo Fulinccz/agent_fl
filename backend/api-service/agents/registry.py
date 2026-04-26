@@ -1,28 +1,10 @@
 """
 Agent Registry - Agent 工厂和注册中心
 
-职责：
-- 统一创建 Provider 实例
-- 管理可用的模型提供者
-- 支持工具注册和发现
-- 为 LangChain 集成预留接口
-
 设计模式：
 - 工厂模式：统一创建对象
 - 单例模式：全局唯一的 Registry
 - 注册表模式：动态管理组件
-
-使用方式：
-    # 基础用法（向后兼容）
-    agent = get_agent(provider="local", model="...")
-    
-    # 新用法（推荐）
-    from agents.registry import AgentRegistry
-    registry = AgentRegistry()
-    provider = registry.get_provider("local")
-    
-    # 获取工具
-    parser_tool = registry.get_tool("resume_parser", provider=provider)
 """
 
 from __future__ import annotations

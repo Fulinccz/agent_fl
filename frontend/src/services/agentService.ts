@@ -1,66 +1,86 @@
-import { apiClient } from './api';
-import type { AgentRequest, UploadRequest } from '../types';
+import { resumeOptimizeApiClient, uploadApiClient } from './api';
+import type { ResumeOptimizeRequest, UploadRequest, ResumeOptimizeEvent } from '../types';
 
+/**
+ * AgentService - 简历优化服务
+ * 
+ * 使用多 Agent 工作流进行简历优化：
+ * 1. ResumeScoreAgent - 简历评分
+ * 2. JDMatchAgent - JD 关键词匹配与优化建议
+ * 3. ResumePolishAgent - 简历润色
+ */
 class AgentService {
-  async streamQuery(
-    request: AgentRequest,
+  /**
+   * 流式简历优化
+   * 
+   * @param request 简历优化请求
+   * @param signal 用于取消请求的 AbortSignal
+   * @param onScore 评分结果回调
+   * @param onSuggestions 优化建议回调
+   * @param onPolished 润色结果回调
+   * @param onComplete 完成回调
+   * @param onError 错误回调
+   */
+  async optimizeResumeStream(
+    request: ResumeOptimizeRequest,
     signal?: AbortSignal,
-    onThought?: (content: string) => void,
-    onContent?: (content: string) => void,
-    onError?: (error: string) => void,
-    onComplete?: () => void
+    onScore?: (data: { overall_score: any; scores: any }) => void,
+    onSuggestions?: (data: { suggestions: any; match_analysis: any }) => void,
+    onPolished?: (data: { optimized_resume: string }) => void,
+    onComplete?: (data: any) => void,
+    onError?: (error: string) => void
   ): Promise<void> {
-    return apiClient.streamAgent(
+    return resumeOptimizeApiClient.optimizeStream(
       request,
       signal,
-      (event) => {
+      (event: ResumeOptimizeEvent) => {
         switch (event.type) {
-          case 'thought':
-            if (onThought && event.content) onThought(event.content);
+          case 'score':
+            if (onScore && event.data) onScore(event.data);
             break;
-          case 'token':
-            if (onContent && event.content) onContent(event.content);
+          case 'suggestions':
+            if (onSuggestions && event.data) onSuggestions(event.data);
             break;
-          case 'error':
-            if (onError && event.content) onError(event.content);
+          case 'polished':
+            if (onPolished && event.data) onPolished(event.data);
             break;
           case 'complete':
-            if (onComplete) onComplete();
+            if (onComplete && event.data) onComplete(event.data);
+            break;
+          case 'error':
+            if (onError && event.message) onError(event.message);
             break;
         }
       },
-      onComplete
+      () => {
+        // onComplete 已经在上面处理了
+      }
     );
   }
 
+  /**
+   * 非流式简历优化
+   * 
+   * @param request 简历优化请求
+   * @returns 优化结果
+   */
+  async optimizeResume(request: ResumeOptimizeRequest) {
+    return resumeOptimizeApiClient.optimize(request);
+  }
+
+  /**
+   * 上传文件并处理
+   * 
+   * @param request 上传请求
+   * @param signal 用于取消请求的 AbortSignal
+   * @returns 处理结果
+   */
   async uploadAndProcess(
     request: UploadRequest,
     signal?: AbortSignal
   ): Promise<string> {
-    const result = await apiClient.uploadFile(request, signal);
+    const result = await uploadApiClient.uploadFile(request, signal);
     return result.response;
-  }
-
-  async uploadAndProcessStream(
-    request: UploadRequest,
-    signal?: AbortSignal,
-    onContent?: (content: string) => void,
-    onError?: (error: string) => void,
-    onComplete?: () => void,
-    onThought?: (content: string) => void
-  ): Promise<void> {
-    return apiClient.uploadFileStreaming(
-      request,
-      signal,
-      (response) => {
-        if (onContent) onContent(response);
-      },
-      (error) => {
-        if (onError) onError(error);
-      },
-      onComplete,
-      onThought
-    );
   }
 }
 

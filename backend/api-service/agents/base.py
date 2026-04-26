@@ -1,10 +1,5 @@
 """
 Agent Base Classes - 向后兼容的基类导出
-
-此文件保留用于向后兼容，实际实现已迁移到：
-- core/base_provider.py: BaseProvider (模型提供者基类)
-- core/base_agent.py: BaseAgent (多技能 Agent 基类)
-- core/base_tool.py: BaseTool, ToolResult (工具基类)
 """
 
 from __future__ import annotations

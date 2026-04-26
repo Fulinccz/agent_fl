@@ -1,84 +1,19 @@
-import type { AgentRequest, UploadRequest } from '../types';
+import type {
+  UploadRequest,
+  ResumeOptimizeRequest,
+  ResumeOptimizeResponse,
+  ResumeOptimizeEvent
+} from '../types';
 
 const baseUrl = (import.meta.env.VITE_API_URL as string) || '/api';
 
-class ApiClient {
+// ==================== 文件上传 API ====================
+
+class UploadApiClient {
   private baseURL: string;
 
   constructor(baseURL: string = baseUrl) {
     this.baseURL = baseURL;
-  }
-
-  async streamAgent(
-    request: AgentRequest,
-    signal?: AbortSignal,
-    onEvent?: (event: StreamEvent) => void,
-    onComplete?: () => void
-  ): Promise<void> {
-    console.log('=== ApiClient.streamAgent 开始 ===');
-    
-    const url = `${this.baseURL}/agent/stream`;
-    console.log('📤 发送请求到:', url);
-    
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: request.query,
-          model: request.model || 'model_serving/Qwen3___5-0___8B',
-          deepThinking: request.deepThinking || false
-        }),
-        signal
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error('No reader available');
-      }
-
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.trim()) {
-            try {
-              const data = JSON.parse(line);
-              
-              if (onEvent) {
-                onEvent(data as StreamEvent);
-              }
-            } catch (e) {
-              // 忽略非JSON行
-            }
-          }
-        }
-      }
-
-      if (onComplete) {
-        onComplete();
-      }
-      
-      console.log('✅ 流式响应完成');
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        console.log('⚠️ 请求被中止');
-        return;
-      }
-      throw error;
-    }
   }
 
   async uploadFile(
@@ -111,43 +46,71 @@ class ApiClient {
 
     return response.json();
   }
+}
 
-  async uploadFileStreaming(
-    request: UploadRequest,
+// ==================== 简历优化多 Agent API ====================
+
+export class ResumeOptimizeApiClient {
+  private baseURL: string;
+
+  constructor(baseURL: string = baseUrl) {
+    this.baseURL = baseURL;
+  }
+
+  /**
+   * 非流式简历优化
+   */
+  async optimize(request: ResumeOptimizeRequest): Promise<ResumeOptimizeResponse> {
+    const response = await fetch(`${this.baseURL}/resume/optimize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request)
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Resume optimization failed');
+    }
+
+    return response.json();
+  }
+
+  /**
+   * 流式简历优化
+   * 
+   * 事件类型：
+   * - type="score": 评分结果 { overall_score, scores }
+   * - type="suggestions": 优化建议 { suggestions, match_analysis }
+   * - type="polished": 润色后的简历 { optimized_resume }
+   * - type="complete": 全部完成 { overall_score, scores, suggestions, optimized_resume, match_analysis }
+   * - type="error": 错误 { message }
+   */
+  async optimizeStream(
+    request: ResumeOptimizeRequest,
     signal?: AbortSignal,
-    onChunk?: (content: string) => void,
-    onError?: (error: string) => void,
-    onComplete?: () => void,
-    onThought?: (content: string) => void
+    onEvent?: (event: ResumeOptimizeEvent) => void,
+    onComplete?: () => void
   ): Promise<void> {
-    const formData = new FormData();
-    formData.append('file', request.file);
-    formData.append('query', request.query);
-    formData.append('provider', request.provider || 'local');
-
+    console.log('=== ResumeOptimizeApiClient.optimizeStream 开始 ===');
+    
+    const url = `${this.baseURL}/resume/optimize/stream`;
+    console.log('📤 发送请求到:', url);
+    
     try {
-      const response = await fetch(`${this.baseURL}/agent/upload_stream`, {
+      const response = await fetch(url, {
         method: 'POST',
-        body: formData,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
         signal
       });
 
       if (!response.ok) {
-        let errorMessage = `Upload failed with status: ${response.status}`;
-        try {
-          const errorData = await response.json();
-          if (errorData.detail) {
-            errorMessage = errorData.detail;
-          }
-        } catch (e) {
-          // 如果解析 JSON 失败，使用默认错误信息
-        }
-        throw new Error(errorMessage);
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
 
       const reader = response.body?.getReader();
       if (!reader) {
-        throw new Error('Readable stream not supported');
+        throw new Error('No reader available');
       }
 
       const decoder = new TextDecoder();
@@ -157,52 +120,43 @@ class ApiClient {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value, { stream: true });
-        buffer += chunk;
-
-        // 处理可能的多个 JSON 对象
+        buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // 保留最后一个不完整的行
+        buffer = lines.pop() || '';
 
         for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const data = JSON.parse(line);
-            // 处理流式事件
-            if (data.type === 'token' && data.content) {
-              onChunk?.(data.content);
-            } else if (data.type === 'thought' && data.content) {
-              onThought?.(data.content);
-            } else if (data.type === 'error' && data.content) {
-              onError?.(data.content);
-            } else if (data.error) {
-              onError?.(data.error);
+          if (line.trim()) {
+            try {
+              const data = JSON.parse(line) as ResumeOptimizeEvent;
+              
+              console.log(`📥 收到事件: type=${data.type}`);
+              
+              if (onEvent) {
+                onEvent(data);
+              }
+            } catch (e) {
+              console.warn('解析事件失败:', line);
             }
-          } catch (e) {
-            console.error('Failed to parse stream chunk:', e);
           }
         }
       }
 
-      onComplete?.();
+      if (onComplete) {
+        onComplete();
+      }
+      
+      console.log('✅ 流式优化完成');
     } catch (error) {
-      if (error instanceof Error && (error.name === 'AbortError' || error.message.includes('aborted'))) {
-        // 用户取消，不处理
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.log('⚠️ 请求被中止');
         return;
       }
-      console.error('Streaming upload error:', error);
-      onError?.(error instanceof Error ? error.message : 'Unknown error');
       throw error;
     }
   }
-
 }
 
-export interface StreamEvent {
-  type: 'thought' | 'token' | 'complete' | 'error';
-  content?: string;
-  full_text?: string;
-}
+// ==================== 导出实例 ====================
 
-export const apiClient = new ApiClient();
-export default ApiClient;
+export const uploadApiClient = new UploadApiClient();
+export const resumeOptimizeApiClient = new ResumeOptimizeApiClient();

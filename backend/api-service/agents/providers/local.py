@@ -187,6 +187,23 @@ class LocalProvider(BaseProvider):
         
         logger.info("用户请求停止生成")
 
+    async def agenerate(self, prompt: str, **kwargs) -> str:
+        """
+        异步生成文本（用于 LangGraph 集成）
+        
+        将同步生成包装为异步，避免阻塞事件循环
+        """
+        import asyncio
+        from concurrent.futures import ThreadPoolExecutor
+        
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor() as pool:
+            result = await loop.run_in_executor(
+                pool,
+                lambda: self.generate(prompt, **kwargs)
+            )
+        return result
+
     def generate(self, prompt: str, images: Optional[List[str]] = None, **kwargs) -> str:
         """
         从本地模型生成文本
@@ -219,7 +236,10 @@ class LocalProvider(BaseProvider):
             outputs = self.transformers_pipeline.model.generate(**generate_kwargs)
             elapsed = time.time() - start_time
             
-            result = tokenizer.decode(outputs[0], skip_special_tokens=True)
+            # 解码生成的内容（去掉输入prompt部分）
+            input_length = inputs['input_ids'].shape[1]
+            generated_tokens = outputs[0][input_length:]
+            result = tokenizer.decode(generated_tokens, skip_special_tokens=True)
             return result
 
         try:
@@ -519,11 +539,9 @@ class LocalProvider(BaseProvider):
                     # 跳过空白 token 和完全重复的 token
                     token_clean = token.strip()
                     if not token_clean or token_clean == last_token:
-                        logger.debug(f"⚪ 跳过空白/重复 token: '{token_clean}'")
                         continue
                     
                     last_token = token_clean
-                    logger.debug(f"✅ 有效 token: '{token_clean[:20]}'")
                     
                     # 根据 deepThinking 参数决定是否解析 think 标签
                     parse_think = kwargs.get("deepThinking", False)
@@ -539,7 +557,6 @@ class LocalProvider(BaseProvider):
                     
                     # 再次检查用户是否请求停止
                     if self._stop_generation:
-                        logger.info("⚠️  用户请求停止生成")
                         yield {"type": "thought", "content": "用户已中止生成"}
                         if hasattr(streamer, 'stop'):
                             streamer.stop()

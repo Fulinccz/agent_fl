@@ -2,9 +2,12 @@
 
 from fastapi import APIRouter, HTTPException, status, UploadFile, File, Form, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import Optional, Dict, Any, List
 from agents.registry import get_agent
 from agents.utils.prompts import ResumePrompts, TextPrompts, PromptManager
+from agents.langgraph.conversation_graph import ConversationGraph, GraphConfig
+from memory.memory_manager import MemoryManager, get_memory_manager
 from services.agent_service import AgentService
 from services.exceptions import AppError
 from rag.retriever import RAGRetriever
@@ -13,6 +16,7 @@ import json
 import os
 from datetime import datetime
 import asyncio
+import uuid
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -23,6 +27,12 @@ prompt_manager = PromptManager()
 # 初始化 RAG 检索器
 rag_retriever: RAGRetriever | None = None
 
+# 初始化记忆管理器
+memory_manager: MemoryManager | None = None
+
+# 初始化 LangGraph 对话图
+conversation_graph: ConversationGraph | None = None
+
 def get_rag_retriever() -> RAGRetriever:
     global rag_retriever
     if rag_retriever is None:
@@ -30,6 +40,37 @@ def get_rag_retriever() -> RAGRetriever:
         rag_retriever.initialize_knowledge_base()
         logger.info("RAG Retriever initialized")
     return rag_retriever
+
+
+def get_memory_manager() -> MemoryManager:
+    global memory_manager
+    if memory_manager is None:
+        memory_manager = MemoryManager(max_context_length=4000)
+        logger.info("Memory Manager initialized")
+    return memory_manager
+
+
+def get_conversation_graph() -> ConversationGraph:
+    global conversation_graph
+    if conversation_graph is None:
+        # 获取本地模型 provider
+        agent = get_agent(provider="local", model=None)
+        provider = agent.provider if hasattr(agent, 'provider') else agent
+        
+        config = GraphConfig(
+            max_tokens=4000,
+            temperature=0.7,
+            system_prompt="你是一个专业的 AI 助手，帮助用户优化简历和解答问题。",
+            enable_rag=True
+        )
+        
+        conversation_graph = ConversationGraph(
+            llm_provider=provider,
+            memory_manager=get_memory_manager(),
+            config=config
+        )
+        logger.info("Conversation Graph initialized")
+    return conversation_graph
 
 @router.get("/health")
 async def health_check():
@@ -40,148 +81,208 @@ UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
-@router.post("/agent/stream")
-async def agent_stream(request: Request, data: "AgentRequest"):
+class ChatRequest(BaseModel):
+    """长对话请求模型"""
+    message: str
+    sessionId: Optional[str] = None  # 不传则创建新会话
+    model: Optional[str] = None
+    enableRag: bool = True
+
+
+class ChatResponse(BaseModel):
+    """长对话响应模型"""
+    response: str
+    sessionId: str
+    messageCount: int
+
+
+class SessionListResponse(BaseModel):
+    """会话列表响应"""
+    sessions: list
+    total: int
+
+
+# ==================== 长对话 API（LangGraph + Memory）====================
+
+@router.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
+    """
+    长对话接口 - 支持多轮对话和记忆
+    
+    - 如果不传 sessionId，会自动创建新会话
+    - 支持 RAG 检索增强
+    - 自动保存对话历史
+    """
+    try:
+        # 获取或创建会话 ID
+        session_id = request.sessionId
+        if not session_id:
+            session_id = str(uuid.uuid4())
+            logger.info(f"Created new session: {session_id}")
+        
+        # 获取对话图
+        graph = get_conversation_graph()
+        
+        # RAG 检索（如果启用）
+        context = {}
+        if request.enableRag:
+            try:
+                retriever = get_rag_retriever()
+                rag_results = retriever.retrieve(request.message, top_k=3)
+                if rag_results:
+                    rag_context_parts = []
+                    for i, ctx in enumerate(rag_results, 1):
+                        content = ctx.get("content", "")
+                        rag_context_parts.append(f"[参考{i}] {content}")
+                    context["rag_context"] = "\n\n".join(rag_context_parts)
+                    logger.info(f"[Chat] RAG context added for session {session_id}")
+            except Exception as e:
+                logger.warning(f"[Chat] RAG failed: {e}")
+        
+        # 执行对话
+        response = await graph.chat(
+            session_id=session_id,
+            user_message=request.message,
+            context=context
+        )
+        
+        # 获取对话统计
+        mem_manager = get_memory_manager()
+        history = await mem_manager.memory_store.get_history(session_id)
+        
+        logger.info(f"[Chat] Session {session_id}: {len(history)} messages")
+        
+        return ChatResponse(
+            response=response,
+            sessionId=session_id,
+            messageCount=len(history)
+        )
+        
+    except Exception as err:
+        logger.error(f"Chat error: {err}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Chat failed: {str(err)}"
+        )
+
+
+@router.post("/chat/stream")
+async def chat_stream(request: Request, data: ChatRequest):
+    """
+    长对话流式接口
+    
+    与 /chat 相同，但使用 Server-Sent Events 流式返回
+    """
     import time
     call_time = time.strftime('%H:%M:%S')
-    logger.info(f"[{call_time}] === agent_stream 被调用 ===")
-    logger.info(f"[{call_time}] query={data.query[:50] if data.query else 'empty'}..., model={data.model}")
-    logger.info(f"[{call_time}] deepThinking={getattr(data, 'deepThinking', False)}")
-    logger.info(f"[{call_time}] taskType={getattr(data, 'taskType', 'chat')}")
     
-    agent = get_agent(provider="local", model=data.model)
-    
-    # RAG 增强检索
-    rag_context = ""
-    try:
-        retriever = get_rag_retriever()
-        logger.info(f"[RAG] 开始检索, 查询: {data.query[:30]}...")
-        
-        context_results = retriever.retrieve(data.query, top_k=3)
-        
-        if context_results:
-            rag_context_parts = []
-            for i, ctx in enumerate(context_results, 1):
-                source = ctx.get("metadata", {}).get("source", "知识库")
-                content = ctx.get("content", "")
-                similarity = ctx.get("similarity", 0)
-                rag_context_parts.append(f"[参考资料{i}] (来源:{source}, 相关度:{similarity:.0%})\n{content}")
-                logger.info(f"[RAG] 参考资料{i}: 相关度={similarity:.2f}, 来源={source}, 内容长度={len(content)}")
-            
-            rag_context = "\n\n".join(rag_context_parts)
-            logger.info(f"[RAG] ✅ 检索完成, 共{len(context_results)}条相关知识已注入Prompt")
-        else:
-            logger.info("[RAG] ⚠️ 未检索到相关知识, 使用纯LLM生成")
-    except Exception as e:
-        logger.warning(f"[RAG] ❌ 检索失败, 使用无上下文模式: {e}")
-    
-    # 统一多维度输出模式 - 一次性返回所有维度
-    if getattr(data, 'deepThinking', False):
-        system_prompt = """请用中文回答。
-
-重要规则：
-1. 禁止添加用户简历中没有的技术栈
-2. 不要引用知识库中的具体数字
-3. 只输出以下 3 个部分，输出完就停止：
-
-【简历评分】
-只给分数（1-100）
-
-【优化建议】
-简短列出 2-3 条
-
-【优化结果（参考）】
-只优化技能栏和项目描述
-
-"""
-    else:
-        system_prompt = """请用中文直接输出结果，不要任何思考过程、分析过程或前缀。
-
-重要规则：
-1. 禁止添加用户简历中没有的技术栈
-2. 不要引用知识库中的具体数字
-3. 只输出以下 3 个部分，输出完就停止：
-
-【简历评分】
-只给分数（1-100）
-
-【优化建议】
-简短列出 2-3 条
-
-【优化结果（参考）】
-只优化技能栏和项目描述
-
-"""
-    
-    # 构建完整 Prompt
-    full_prompt = system_prompt + "\n\n"
-    
-    # 如果有 RAG 上下文，作为参考放在最后（不作为示例）
-    if rag_context:
-        full_prompt += f"""
----
-【参考资料】（仅供学习表达方式，不要模仿格式）
-{rag_context}
----
-"""
-    
-    full_prompt += f"\n用户简历：{data.query}"
+    # 获取或创建会话 ID
+    session_id = data.sessionId or str(uuid.uuid4())
+    logger.info(f"[{call_time}] Chat stream started: session={session_id}")
     
     async def event_stream():
         try:
-            item_count = 0
-            # 传递 deepThinking 参数，让后端知道是否应该解析 think 标签
-            for item in agent.generate_with_thoughts(full_prompt, deepThinking=getattr(data, 'deepThinking', False)):
-                item_count += 1
-                
-                # 记录每个 item 的类型，便于调试
-                logger.debug(f"[{call_time}] Yield item #{item_count}: type={item.get('type', 'unknown')}")
-                
-                # 检查客户端是否已经断开连接
+            # 发送会话信息
+            yield json.dumps({"type": "session", "sessionId": session_id}, ensure_ascii=False) + "\n"
+            
+            # 获取对话图
+            graph = get_conversation_graph()
+            
+            # RAG 检索
+            context = {}
+            if data.enableRag:
+                try:
+                    retriever = get_rag_retriever()
+                    rag_results = retriever.retrieve(data.message, top_k=3)
+                    if rag_results:
+                        rag_context_parts = []
+                        for i, ctx in enumerate(rag_results, 1):
+                            content = ctx.get("content", "")
+                            rag_context_parts.append(f"[参考{i}] {content}")
+                        context["rag_context"] = "\n\n".join(rag_context_parts)
+                except Exception as e:
+                    logger.warning(f"[Chat Stream] RAG failed: {e}")
+            
+            # 执行流式对话
+            full_response = ""
+            async for chunk in graph.stream_chat(
+                session_id=session_id,
+                user_message=data.message,
+                context=context
+            ):
                 if await request.is_disconnected():
-                    logger.info(f"[{call_time}] Client disconnected after {item_count} items, stopping generation")
-                    agent.stop_generation()
+                    logger.info(f"[{call_time}] Client disconnected")
                     break
                 
-                # 以 JSON 行流式输出，前端易于解析
-                yield json.dumps(item, ensure_ascii=False) + "\n"
-                
-                # 给事件循环一个机会来运行其他任务
+                full_response += chunk
+                yield json.dumps({"type": "token", "content": chunk}, ensure_ascii=False) + "\n"
                 await asyncio.sleep(0)
             
-            logger.info(f"[{call_time}] Stream completed, total items: {item_count}")
+            # 发送完成标记
+            mem_manager = get_memory_manager()
+            history = await mem_manager.memory_store.get_history(session_id)
+            yield json.dumps({
+                "type": "complete",
+                "sessionId": session_id,
+                "messageCount": len(history)
+            }, ensure_ascii=False) + "\n"
+            
+            logger.info(f"[{call_time}] Chat stream completed: {len(full_response)} chars")
+            
         except Exception as e:
-            logger.error(f"[{call_time}] Stream error: %s", e, exc_info=True)
-            agent.stop_generation()
-        finally:
-            # 只在生成未完成时调用 stop_generation（避免重复调用）
-            pass
+            logger.error(f"[{call_time}] Chat stream error: {e}")
+            yield json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False) + "\n"
     
-    logger.info(f"[{call_time}] 返回 StreamingResponse")
     return StreamingResponse(event_stream(), media_type="application/json")
 
 
-class AgentRequest(BaseModel):
-    query: str
-    provider: str = "local"
-    model: str | None = None
-    deepThinking: bool = False
-    taskType: str = "chat"  # chat, parse, optimize, score, polish
-
-
-@router.post("/agent")
-async def agent_query(request: AgentRequest):
+@router.get("/chat/sessions", response_model=SessionListResponse)
+async def list_sessions(limit: int = 100):
+    """获取会话列表"""
     try:
-        logger.debug("Received agent request: %s", request.dict())
-        result = AgentService().generate(request.query, provider=request.provider, model=request.model)
-        logger.info("Agent result returned, len=%d", len(result) if isinstance(result, str) else 0)
-        return {"response": result}
-    except AppError as err:
-        logger.warning("Agent business error: %s", err, exc_info=True)
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"code": err.code, "message": str(err), "context": err.context})
+        sessions = await get_memory_manager().list_sessions(limit)
+        return SessionListResponse(sessions=sessions, total=len(sessions))
     except Exception as err:
-        logger.error("agent_query uncaught error: %s", err, exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+        logger.error(f"List sessions error: {err}")
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+@router.get("/chat/sessions/{session_id}/history")
+async def get_session_history(session_id: str, limit: int = 50):
+    """获取指定会话的历史记录"""
+    try:
+        mem_manager = get_memory_manager()
+        history = await mem_manager.memory_store.get_history(session_id, limit)
+        return {
+            "sessionId": session_id,
+            "messages": [h.to_dict() for h in history],
+            "count": len(history)
+        }
+    except Exception as err:
+        logger.error(f"Get history error: {err}")
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+@router.delete("/chat/sessions/{session_id}")
+async def delete_session(session_id: str):
+    """删除会话"""
+    try:
+        await get_memory_manager().delete_session(session_id)
+        return {"message": "Session deleted", "sessionId": session_id}
+    except Exception as err:
+        logger.error(f"Delete session error: {err}")
+        raise HTTPException(status_code=500, detail=str(err))
+
+
+@router.delete("/chat/sessions/{session_id}/clear")
+async def clear_session_history(session_id: str):
+    """清空会话历史（保留会话）"""
+    try:
+        await get_memory_manager().clear_session(session_id)
+        return {"message": "Session history cleared", "sessionId": session_id}
+    except Exception as err:
+        logger.error(f"Clear session error: {err}")
+        raise HTTPException(status_code=500, detail=str(err))
 
 
 @router.post("/agent/upload_stream")
@@ -464,3 +565,113 @@ async def rag_search(query: str = Form(...), top_k: int = 5):
     except Exception as e:
         logger.error(f"RAG search error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== 多 Agent 简历优化 API ====================
+
+from pydantic import BaseModel
+from typing import Optional
+from agents.langgraph.resume_agents import get_resume_workflow
+
+
+class ResumeOptimizeRequest(BaseModel):
+    """简历优化请求"""
+    resume: str
+    jd: Optional[str] = None
+    position_type: Optional[str] = None
+
+
+class ResumeOptimizeResponse(BaseModel):
+    """简历优化响应"""
+    success: bool
+    overall_score: Optional[Dict[str, Any]]
+    scores: Optional[Dict[str, Any]]
+    suggestions: Optional[List[Dict[str, Any]]]
+    optimized_resume: Optional[str]
+    match_analysis: Optional[Dict[str, Any]]
+    error: Optional[str]
+
+
+@router.post("/resume/optimize", response_model=ResumeOptimizeResponse)
+async def resume_optimize(request: ResumeOptimizeRequest):
+    """
+    多 Agent 简历优化接口
+    
+    使用 3 个 Agent 协作完成简历优化：
+    1. ResumeScoreAgent - 简历多维度评分
+    2. JDMatchAgent - JD 关键词匹配与优化建议
+    3. ResumePolishAgent - 简历润色
+    
+    Args:
+        resume: 简历内容
+        jd: 目标岗位 JD（可选）
+        position_type: 岗位类型（可选）
+    
+    Returns:
+        包含评分、建议、优化后简历的完整结果
+    """
+    try:
+        logger.info(f"[ResumeOptimize] 开始简历优化，简历长度: {len(request.resume)}")
+        
+        # 获取工作流实例
+        workflow = get_resume_workflow()
+        
+        # 执行优化
+        result = workflow.optimize(
+            resume=request.resume,
+            jd=request.jd,
+            position_type=request.position_type
+        )
+        
+        logger.info(f"[ResumeOptimize] 优化完成，评分: {result.get('overall_score', {}).get('score', 0)}")
+        
+        return ResumeOptimizeResponse(**result)
+        
+    except Exception as e:
+        logger.error(f"[ResumeOptimize] 优化失败: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"简历优化失败: {str(e)}"
+        )
+
+
+@router.post("/resume/optimize/stream")
+async def resume_optimize_stream(request: Request, data: ResumeOptimizeRequest):
+    """
+    多 Agent 简历优化流式接口
+    
+    流式返回每个 Agent 的执行结果：
+    1. type="score" - 评分结果
+    2. type="suggestions" - 优化建议
+    3. type="polished" - 润色后的简历
+    4. type="complete" - 全部完成
+    """
+    import time
+    call_time = time.strftime('%H:%M:%S')
+    logger.info(f"[{call_time}] Resume optimize stream started")
+    
+    async def event_stream():
+        try:
+            workflow = get_resume_workflow()
+            
+            for event in workflow.optimize_stream(
+                resume=data.resume,
+                jd=data.jd,
+                position_type=data.position_type
+            ):
+                # 检查客户端是否断开
+                if await request.is_disconnected():
+                    logger.info(f"[{call_time}] Client disconnected")
+                    break
+                
+                # 发送事件
+                yield json.dumps(event, ensure_ascii=False) + "\n"
+                await asyncio.sleep(0)
+            
+            logger.info(f"[{call_time}] Resume optimize stream completed")
+            
+        except Exception as e:
+            logger.error(f"[{call_time}] Resume optimize stream error: {e}")
+            yield json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False) + "\n"
+    
+    return StreamingResponse(event_stream(), media_type="application/json")
