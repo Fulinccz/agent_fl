@@ -112,6 +112,7 @@ def generate_stream(
             # 记录首 token 时间
             if token_count == 1:
                 logger.info(f"收到第 1 个 token (首 token 耗时：{current_time - start_time:.2f}s)")
+                logger.info(f"首 token 内容: {token!r}")
             
             # 检测生成停滞
             token_interval = current_time - last_token_time
@@ -122,6 +123,13 @@ def generate_stream(
             
             # 处理 token
             outputs = processor.process_token(token)
+            
+            # 记录前10个输出 token
+            if token_count <= 10:
+                logger.info(f"Token {token_count}: 输入={token!r}, 输出数量={len(outputs)}")
+                for i, output in enumerate(outputs):
+                    logger.info(f"  输出 {i}: type={output.get('type')}, content={output.get('content')!r}")
+            
             for output in outputs:
                 yield output
             

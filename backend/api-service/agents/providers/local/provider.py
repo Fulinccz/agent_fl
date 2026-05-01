@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 import torch
 from logger import get_logger
-from ..core.base_provider import BaseProvider
+from ...core.base_provider import BaseProvider
 from .streamer import generate_stream
 
 try:

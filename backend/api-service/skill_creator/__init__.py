@@ -11,6 +11,9 @@ from .registry import get_skill_registry
 
 logger = get_logger(__name__)
 
+# 全局标记：技能是否已初始化
+_skills_initialized = False
+
 
 def discover_skills():
     """
@@ -71,5 +74,13 @@ def discover_skills():
 
 
 def init_skills():
-    """初始化技能系统"""
-    return discover_skills()
+    """初始化技能系统（带防重复初始化）"""
+    global _skills_initialized
+    
+    if _skills_initialized:
+        logger.debug("Skills already initialized, skipping...")
+        return get_skill_registry()
+    
+    registry = discover_skills()
+    _skills_initialized = True
+    return registry

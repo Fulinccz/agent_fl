@@ -151,24 +151,36 @@ class ResumeOptimizationWorkflow:
         polish_agent = ResumePolishAgent(llm=shared_llm)
 
         accumulated_text = ""
+        last_yielded_length = 0
+        
         for chunk in polish_agent.run_stream(state):
             if chunk.get("type") == "token":
                 accumulated_text += chunk.get("content", "")
-                yield {
-                    "type": "polished",
-                    "data": {
-                        "optimized_resume": accumulated_text,
-                        "partial": True
+                
+                # 每累积50个字符才输出，减少渲染次数，不做清理（避免不完整内容被过滤）
+                if len(accumulated_text) - last_yielded_length >= 50:
+                    yield {
+                        "type": "polished",
+                        "data": {
+                            "optimized_resume": accumulated_text,
+                            "partial": True
+                        }
                     }
-                }
+                    last_yielded_length = len(accumulated_text)
+                        
             elif chunk.get("type") == "error":
                 logger.error(f"[optimize_stream] 润色失败: {chunk.get('message')}")
-                state["error"] = chunk.get("message")
+                state["error"] = chunk.get('message')
 
         # 最终清理后的结果
-        logger.debug(f"[optimize_stream] 清理前内容: {accumulated_text[:500]}...")
+        logger.info(f"[optimize_stream] 完整生成内容长度: {len(accumulated_text)}")
+        logger.info(f"[optimize_stream] 清理前内容前500字符: {accumulated_text[:500]!r}")
+        
         final_result = polish_agent._clean_result(accumulated_text, state["resume"])
-        logger.debug(f"[optimize_stream] 清理后内容: {final_result[:500]}...")
+        
+        logger.info(f"[optimize_stream] 清理后内容长度: {len(final_result)}")
+        logger.info(f"[optimize_stream] 清理后内容前500字符: {final_result[:500]!r}")
+        
         if not final_result or len(final_result) < 50:
             logger.warning(f"[optimize_stream] 清理后内容太短({len(final_result)}字符)，使用原始简历")
             final_result = state["resume"][:2000]
@@ -177,6 +189,7 @@ class ResumeOptimizationWorkflow:
         state["current_step"] = "polish_completed"
 
         logger.info(f"[optimize_stream] 润色完成，长度: {len(final_result)}")
+        
         yield {
             "type": "polished",
             "data": {

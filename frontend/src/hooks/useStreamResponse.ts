@@ -60,10 +60,17 @@ export function useStreamResponse(
           }
         },
         (data) => {
-          polishedRef.current = data;
-          setPolished(data);
-          if (options.onPolishedUpdate) {
-            options.onPolishedUpdate(data);
+          // 避免重复设置相同内容
+          const currentText = polishedRef.current?.optimized_resume || '';
+          const newText = data?.optimized_resume || '';
+          
+          // 只有当内容真正变化时才更新
+          if (newText !== currentText) {
+            polishedRef.current = data;
+            setPolished(data);
+            if (options.onPolishedUpdate) {
+              options.onPolishedUpdate(data);
+            }
           }
         }
       );

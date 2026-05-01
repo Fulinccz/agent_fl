@@ -82,11 +82,23 @@ class ResumePolishAgent:
 - 添加数字，如"提升30%"、"完成5个"
 - 突出技术难点
 
+重要：只输出优化后的简历内容，不要添加任何标题、说明、角色标记（如user/assistant）或额外内容。
 直接输出优化后的描述："""
 
     def _clean_result(self, result: str, original_resume: str = "") -> str:
         """清理润色结果，移除思考标签和常见前缀"""
         import re
+        import traceback
+
+        # 记录调用栈
+        stack = traceback.extract_stack()
+        caller = stack[-2] if len(stack) >= 2 else None
+        caller_info = f"{caller.filename.split('/')[-1]}:{caller.lineno}" if caller else "unknown"
+        
+        # 记录原始输出用于调试
+        logger.info(f"[_clean_result] 被 {caller_info} 调用")
+        logger.info(f"[_clean_result] 原始输出前200字符: {result[:200]!r}")
+        logger.info(f"[_clean_result] 原始输出长度: {len(result)}")
 
         # 移除思考标签及其内容
         result = re.sub(r'<think>.*?</think>', '', result, flags=re.DOTALL | re.IGNORECASE)
@@ -101,45 +113,44 @@ class ResumePolishAgent:
         result = re.sub(r'##\s*', '', result)
         result = re.sub(r'#\s*', '', result)
 
-        # 移除 assistant 标记及其后面的内容
-        result = re.sub(r'assistant[:：].*', '', result, flags=re.DOTALL | re.IGNORECASE)
+        # 移除 assistant 标记及其后面的内容（但保留 assistant 标记后的内容）
+        # 只移除 "assistant:" 这个标记本身，不移除后面的内容
+        result = re.sub(r'^assistant[:：]\s*', '', result, flags=re.IGNORECASE)
+        result = re.sub(r'\nassistant[:：]\s*', '\n', result, flags=re.IGNORECASE)
 
-        # 检测并移除重复内容（如"保持原意不变"的循环）
-        # 如果同一句话重复出现3次以上，截断到第一次出现的位置
+        # 记录中间结果
+        logger.info(f"[_clean_result] 基础清理后长度: {len(result)}")
+
+        # 移除明显的角色标记行（如 "user:" 或 "assistant:" 开头的新段落）
+        # 只移除这些标记行本身，不截断后续内容
         lines = result.split('\n')
-        seen_lines = set()
         filtered_lines = []
         for line in lines:
             line_stripped = line.strip()
-            if not line_stripped:
+            # 跳过纯角色标记行（如单独的 "user:" 或 "assistant:"）
+            if re.match(r'^(user|assistant|system|human|ai)[:：]?\s*$', line_stripped, re.IGNORECASE):
+                logger.debug(f"检测到角色标记，移除该行: {line_stripped[:50]}")
                 continue
-            # 检测重复行（忽略数字差异）
-            line_normalized = re.sub(r'\d+', 'N', line_stripped)
-            if line_normalized in seen_lines:
-                # 发现重复，停止处理
-                break
-            seen_lines.add(line_normalized)
             filtered_lines.append(line)
         result = '\n'.join(filtered_lines)
 
-        # 移除模板内容行（以特定关键词开头的行）
-        skip_keywords = [
-            '岗位：', '岗位:', '项目经历：', '项目经历:',
-            '个人简历', '姓名：', '姓名:', '联系电话：', '联系电话:',
-            '电子邮箱：', '电子邮箱:', '求职意向：', '求职意向:',
-            '要求：', '要求:', '改写示例', '原始：', '改写：'
-        ]
-        lines = result.split('\n')
-        filtered_lines = []
-        for line in lines:
-            line_stripped = line.strip()
-            # 如果行以跳过关键词开头，则跳过该行及之后所有内容
-            if any(line_stripped.startswith(keyword) for keyword in skip_keywords):
-                break
-            filtered_lines.append(line)
-        result = '\n'.join(filtered_lines)
+        # 移除角色标记及其后面的所有内容（仅当角色标记是独立段落时）
+        result = re.sub(r'\n\s*(user|assistant|system|human|ai)[:：].*', '', result, flags=re.DOTALL | re.IGNORECASE)
+
+        # 移除结尾的 user/assistant 标记（不带冒号的情况）
+        result = re.sub(r'\s*\b(user|assistant|system|human|ai)\b\s*$', '', result, flags=re.IGNORECASE)
 
         # 移除多余的空行
         result = re.sub(r'\n{3,}', '\n\n', result)
+
+        # 记录最终结果
+        logger.info(f"[_clean_result] 最终清理后长度: {len(result)}")
+        logger.info(f"[_clean_result] 最终结果前200字符: {result[:200]!r}")
+
+        # 如果结果太短，可能是被过度过滤了，返回原始简历
+        if len(result.strip()) < 50 and len(original_resume) > 100:
+            logger.warning(f"清理后内容太短({len(result)}字符)，返回原始简历前1000字符")
+            logger.warning(f"原始输出内容: {result[:500]!r}")
+            return original_resume[:1000]
 
         return result.strip()
