@@ -1,4 +1,5 @@
 # Dependencies
+node_modules/
 frontend/node_modules/
 backend/api-service/venv/
 backend/api-service/__pycache__/
@@ -70,3 +71,11 @@ htmlcov/
 # Database
 *.db
 *.sqlite3
+
+# raw_data module
+raw_data/logs/
+raw_data/data/*.csv
+raw_data/.env
+raw_data/__pycache__/
+raw_data/**/*.pyc
+raw_data/.pytest_cache/
