@@ -72,6 +72,11 @@ htmlcov/
 *.db
 *.sqlite3
 
+# data module (Flink + Redis pipeline)
+data/.env
+data/java-pipeline/target/
+data/java-pipeline/*.iml
+
 # raw_data module
 raw_data/logs/
 raw_data/data/*.csv
@@ -79,3 +84,17 @@ raw_data/.env
 raw_data/__pycache__/
 raw_data/**/*.pyc
 raw_data/.pytest_cache/
+
+# Java
+*.class
+*.jar
+*.war
+*.ear
+.mvn/
+target/
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+# Docker volumes
+docker-volumes/
+*.volume
