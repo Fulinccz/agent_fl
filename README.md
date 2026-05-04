@@ -1,95 +1,119 @@
 # Fulin AI - AI 简历智能优化平台
 
-> **私有化部署的 AI Agent 平台，集成简历解析 - JD匹配 - 智能优化 - 生成改写全链路能力**
+> **私有化部署的 AI Agent 平台，集成简历解析 - JD 匹配 - 智能优化 - 生成改写全链路能力**
 
-## 🚀 项目简介
+## 技术架构
 
-Fulin AI 是一个基于本地开源 LLM（Qwen3.5 系列）的 AI 简历智能优化平台，采用现代化的微服务架构，支持：
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        用户层 (React)                        │
+└───────────────────────────┬─────────────────────────────────┘
+                            │ HTTP
+┌───────────────────────────▼─────────────────────────────────┐
+│                   API Gateway (Go/Gin)                       │
+│              路由转发 · 限流熔断 · 安全认证                    │
+└───────────────────────────┬─────────────────────────────────┘
+                            │
+        ┌───────────────────┼───────────────────┐
+        │                   │                   │
+┌───────▼──────┐  ┌────────▼────────┐  ┌──────▼──────┐
+│  AI Service  │  │   Data Pipeline │  │   RAG       │
+│  (FastAPI)   │  │  (Flink+Redis)  │  │  (FAISS)    │
+│              │  │                 │  │             │
+│ · LLM 推理   │  │ · ETL 清洗      │  │ · 向量检索   │
+│ · Agent 路由 │  │ · 数据去重      │  │ · 语义匹配   │
+│ · 简历解析   │  │ · 缓存预热      │  │ · 知识增强   │
+└──────────────┘  └─────────────────┘  └─────────────┘
+        │                   │                   │
+        └───────────────────┼───────────────────┘
+                            │
+┌───────────────────────────▼─────────────────────────────────┐
+│              数据层 (MySQL + Redis + FAISS)                  │
+│     结构化数据 · 缓存 · 向量库                                │
+└─────────────────────────────────────────────────────────────┘
+```
 
-- **简历智能解析**：从非结构化文本提取结构化信息
-- **JD 匹配分析**：多维度评分和匹配度评估
-- **智能优化建议**：基于目标职位的个性化改写
-- **文本润色**：多种风格转换（专业/简洁/说服/学术）
-- **流式输出**：实时展示思考过程和优化结果
-- **停止生成**：支持用户随时中止生成过程
+### 核心服务
 
-## 🏗️ 技术栈
-
-### 后端服务
-| 组件 | 技术栈 | 说明 |
+| 服务 | 技术栈 | 职责 |
 |------|--------|------|
-| **AI Service** | Python 3.12 + FastAPI | 核心业务逻辑，LLM 推理 |
-| **API Gateway** | Go 1.25 + Gin | 反向代理，负载均衡，限流 |
-| **Frontend** | React 18 + TypeScript + Vite | 用户界面 |
+| **API Gateway** | Go 1.25 + Gin | 反向代理、负载均衡、限流熔断、CORS |
+| **AI Service** | Python 3.12 + FastAPI | LLM 推理、Agent 编排、简历解析 |
+| **Data Pipeline** | Java + Flink 2.0 | 实时 ETL、数据清洗、Redis 缓存 |
+| **Frontend** | React 18 + TypeScript | 用户交互界面 |
 
-### AI 能力
-| 技术 | 用途 |
+### 基础设施
+
+| 组件 | 用途 |
 |------|------|
-| **本地 LLM** | Qwen3.5 系列（0.8B / 4B / 8B）|
-| **Transformers** | 模型推理框架 |
-| **LangChain 预留** | 多技能 Agent 架构（开发中）|
+| **MySQL 8.0** | 结构化数据持久化（职位、简历） |
+| **Redis** | 缓存、分布式锁、去重集合 |
+| **FAISS** | 向量检索（简历语义匹配） |
+| **Kafka** | 消息队列（预留异步解耦能力） |
+| **Docker** | 容器化部署 |
 
-## 📁 项目结构
+---
+
+## 项目结构
 
 ```
 FulinAI/
 ├── backend/
-│   ├── api-gateway/          # Go API Gateway
-│   │   ├── cmd/server/main.go
+│   ├── api-gateway/              # Go API 网关
 │   │   ├── internal/
-│   │   │   ├── middleware/    # 中间件层
-│   │   │   ├── proxy/        # 代理层
-│   │   │   ├── router/       # 路由配置
-│   │   │   └── service/      # 服务发现
-│   │   └── config/config.yaml
+│   │   │   ├── middleware/       # CORS、限流、安全头
+│   │   │   ├── proxy/            # 反向代理
+│   │   │   └── router/           # 路由配置
+│   │   └── cmd/server/main.go
 │   │
-│   └── api-service/          # Python AI Service
-│       ├── agents/           # Agent 框架
-│       │   ├── core/         # 核心基类
-│       │   ├── providers/    # 模型提供者
-│       │   ├── tools/        # 工具系统
-│       │   ├── services/     # 业务服务
-│       │   └── utils/        # 工具函数
-│       ├── api/routes.py     # API 路由
-│       └── main.py           # 入口文件
+│   └── api-service/              # Python AI 核心服务
+│       ├── api/                  # API 路由（版本化 /v1）
+│       ├── agents/               # Agent 框架
+│       │   ├── core/             # 基类与接口
+│       │   ├── providers/        # 模型提供者（本地/在线）
+│       │   └── langgraph/        # 多技能工作流
+│       ├── rag/                  # RAG 检索增强
+│       │   ├── text_based/       # 文本向量化
+│       │   └── db_based/         # 数据库向量化
+│       ├── messaging/            # Kafka 生产者（预留）
+│       ├── cache/                # Redis 缓存 + 分布式锁
+│       ├── middleware/           # 限流中间件
+│       └── main.py               # 服务入口
 │
-├── frontend/                 # React 前端
-│   ├── src/
-│   │   ├── components/      # UI 组件
-│   │   ├── hooks/           # 自定义 Hooks
-│   │   ├── services/        # 服务层
-│   │   ├── context/         # 状态管理
-│   │   └── types/           # 类型定义
-│   └── App.tsx              # 主应用
+├── raw_data/                     # 数据采集模块
+│   ├── src/job/                  # JD 爬虫（并发优化）
+│   │   ├── crawler.py            # 智联/51job 并发爬取
+│   │   └── collector.py          # 采集调度
+│   ├── src/resume/               # 简历导入
+│   ├── alembic/                  # 数据库迁移
+│   └── data/                     # 数据集
 │
-├── docker-compose.yml        # Docker 编排
-└── README.md                # 本文档
+├── data/                         # 数据管道
+│   └── java-pipeline/            # Flink 实时处理
+│       └── src/main/java/com/fulin/
+│           ├── FlinkResumeJob.java    # 主作业
+│           ├── BatchRedisSink.java    # 批量写入 Redis
+│           └── ResumeDataCleaner.java # 数据清洗
+│
+├── docker-compose.yml            # 全链路容器编排
+└── README.md
 ```
 
-## 🛠️ 快速开始
+---
 
-### 方式一：Docker Compose（推荐）
+## 快速开始
 
-```bash
-# 克隆项目
-git clone <repository-url>
-cd FulinAI
+### 环境要求
 
-# 启动所有服务
-docker-compose up -d
+- Python 3.12+
+- Go 1.25+
+- Java 17+（Flink）
+- Docker & Docker Compose
+- NVIDIA GPU（推荐，用于模型推理）
 
-# 查看日志
-docker-compose logs -f
+### 本地开发
 
-# 访问应用
-# Frontend: http://localhost:80
-# Gateway: http://localhost:8080
-# Python Service: http://localhost:8000
-```
-
-### 方式二：本地开发
-
-#### 1️⃣ 后端服务 (Python)
+**1. AI Service（Python）**
 
 ```bash
 cd backend/api-service
@@ -101,176 +125,73 @@ source venv/bin/activate  # Windows: venv\Scripts\activate
 # 安装依赖
 pip install -r requirements.txt
 
-# 可选：安装加速库（推荐用于 CPU 推理）
-pip install git+https://github.com/Dao-AILab/causal-conv1d
-
 # 启动服务
 python main.py
 ```
 
-#### 2️⃣ API Gateway (Go)
+**2. API Gateway（Go）**
 
 ```bash
 cd backend/api-gateway
-
-# 安装依赖
 go mod download
-
-# 启动服务
 go run cmd/server/main.go
 ```
 
-#### 3️⃣ 前端 (React)
+**3. 数据管道（Java/Flink）**
+
+```bash
+cd data/java-pipeline
+mvn clean package
+mvn exec:java -Dexec.mainClass="com.fulin.FlinkResumeJob"
+```
+
+**4. 前端（React）**
 
 ```bash
 cd frontend
-
-# 安装依赖
 npm install
-
-# 启动开发服务器
 npm run dev
-
-# 构建生产版本
-npm run build
 ```
-
-## ⚙️ 配置说明
-
-### API Gateway 配置 (`backend/api-gateway/config/config.yaml`)
-
-```yaml
-server:
-  port: "8080"
-  mode: "debug"  # debug, release, test
-
-python:
-  baseURL: "http://localhost:8000"
-  agentPath: "/api/agent"
-  agentStreamPath: "/api/agent/stream"
-
-rate_limit:
-  enabled: false
-  requests_per_second: 100
-  burst: 50
-```
-
-### 环境变量
-
-| 变量名 | 说明 | 默认值 |
-|--------|------|--------|
-| `PYTHON_BASEURL` | Python 服务地址 | `http://localhost:8000` |
-| `GIN_MODE` | Gin 运行模式 | `debug` |
-| `VITE_API_URL` | 前端 API 地址 | `/api` |
-
-## 🔧 本地运行加速库配置（推荐）
-
-为了避免大型模型在 CPU 上推理过慢，建议安装以下加速库：
-
-```bash
-cd backend/api-service
-pip install git+https://github.com/Dao-AILab/causal-conv1d
-```
-
-以上包含：
-- `flash-attn`: 高性能 Attention 内核
-- `causal-conv1d`: 快速因果卷积实现
-
-启动服务后，日志中不应出现 `fast path is not available`，否则说明加速路径仍不可用。
-
-## 📊 API 文档
-
-### 主要接口
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/api/agent/stream` | 流式生成（SSE）|
-| POST | `/api/agent` | 同步生成 |
-| POST | `/api/agent/upload` | 文件上传处理 |
-| GET | `/health` | 健康检查 |
-
-### 流式响应格式
-
-```json
-{"type": "thought", "content": "思考内容..."}
-{"type": "token", "full_text": "生成的文本"}
-{"type": "complete", "full_text": "完整结果"}
-```
-
-## 🎯 开发调试小贴士
-
-- ⚠️ 首次运行 `Qwen3___5-4B` 模型体积大，加载时间会较长
-- 💡 为了快速响应可在 `agents/providers/local.py` 中设置 `max_new_tokens=32`
-- ✅ 请确保本机有可用 GPU + CUDA，或使用轻量模型（如 gpt2）做调试
-- 🔄 支持热重载：修改代码后自动重启服务
-- 📝 日志输出在控制台，便于调试
-
-## 🏗️ 架构设计亮点
-
-### 分层架构
-- **Core 层**: 抽象基类和接口定义
-- **Provider 层**: 模型提供者（本地/在线）
-- **Tool 层**: 可插拔工具系统
-- **Service 层**: 业务逻辑组合
-- **API 层**: HTTP 接口和路由
-
-### 设计模式
-- **工厂模式**: 统一创建 Provider 和 Tool
-- **单例模式**: 全局唯一的 Registry
-- **策略模式**: 可切换不同的模型实现
-- **装饰器模式**: 自动注册工具
-
-### 扩展性
-- ✅ 支持 LangChain 集成（预留接口）
-- ✅ 支持多模型切换
-- ✅ 支持插件化工具扩展
-- ✅ 支持分布式部署
-
-## 📝 开发路线图
-
-### Phase 1: 当前状态 ✅
-- [x] 核心框架完成
-- [x] Provider 层完成
-- [x] Tool 系统完成
-- [x] Service 层完成
-- [x] 向后兼容保证
-- [x] Docker 化部署
-
-### Phase 2: LangChain 集成（进行中）
-- [ ] ReAct Agent 实现
-- [ ] 多步骤工作流编排
-- [ ] 记忆和上下文管理
-- [ ] 自我反思机制
-
-### Phase 3: 高级特性（规划中）
-- [ ] RAG 知识库检索增强
-- [ ] Plugin 插件系统
-- [ ] 多租户支持
-- [ ] 监控和可观测性
-- [ ] A/B 测试平台
-
-## 🤝 贡献指南
-
-欢迎提交 Issue 和 Pull Request！
-
-1. Fork 本仓库
-2. 创建特性分支 (`git checkout -b feature/amazing-feature`)
-3. 提交更改 (`git commit -m 'Add some amazing feature'`)
-4. 推送到分支 (`git push origin feature/amazing-feature`)
-5. 打开 Pull Request
-
-## 📄 许可证
-
-本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情
-
-## 🙏 致谢
-
-- [Qwen](https://github.com/QwenLM/Qwen3) - 本地 LLM 模型
-- [FastAPI](https://fastapi.tiangolo.com/) - 现代 Python Web 框架
-- [Gin](https://gin-gonic.com/) - Go HTTP 框架
-- [React](https://react.dev/) - UI 库
-- [LangChain](https://python.langchain.com/) - LLM 应用框架
 
 ---
 
-**Made with ❤️ by Fulin Team**
+## 核心功能
+
+### 1. 简历智能解析
+
+从非结构化文本提取结构化信息：
+- 技能栈识别与分级
+- 项目经历提取（背景/职责/成果）
+- 工作经历时间线分析
+
+### 2. JD 智能匹配
+
+多维度评估简历与职位匹配度：
+- 关键词匹配（TF-IDF + 语义相似度）
+- 技能 gap 分析
+- 经验年限匹配
+
+### 3. AI 优化生成
+
+基于目标职位的个性化改写：
+- **句式润色**：专业表达转换
+- **量化增强**：添加数据指标
+- **STAR 法则**：项目描述结构化
+- **风格切换**：专业/简洁/说服/学术
+
+### 4. 流式交互
+
+实时展示思考过程和生成结果：
+- Server-Sent Events (SSE) 流式输出
+- 支持随时停止生成
+- 思考过程可视化
+
+---
+
+## 许可证
+
+MIT License - 查看 [LICENSE](LICENSE) 文件
+
+---
+
+**Made with ❤️ by Fulin**
