@@ -1,6 +1,7 @@
 """
 职位(JD)爬虫 - 智联招聘 + 前程无忧
 基于 Playwright + BeautifulSoup 实现
+优化版：并发爬取 + 浏览器复用
 """
 
 import asyncio
@@ -18,18 +19,20 @@ from src.logger import logger
 
 
 class JobCrawler:
-    """职位爬虫"""
+    """职位爬虫（并发优化版）"""
 
-    def __init__(self, headless: bool = True, timeout: int = 30000):
+    def __init__(self, headless: bool = True, timeout: int = 30000, max_concurrent: int = 5):
         self.headless = headless
         self.timeout = timeout
+        self.max_concurrent = max_concurrent  # 并发数限制
         self.browser = None
         self.context = None
         self.playwright = None
-        logger.info("职位爬虫初始化完成")
+        self._semaphore = None  # 信号量控制并发
+        logger.info("职位爬虫初始化完成 (max_concurrent=%d)", max_concurrent)
 
     async def _init_browser(self):
-        """初始化浏览器"""
+        """初始化浏览器（只启动一次）"""
         if not self.browser:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
@@ -39,6 +42,7 @@ class JobCrawler:
                 viewport={'width': 1280, 'height': 800},
                 user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             )
+            self._semaphore = asyncio.Semaphore(self.max_concurrent)
             logger.info("浏览器启动完成")
 
     async def _close_browser(self):
@@ -54,19 +58,19 @@ class JobCrawler:
             self.playwright = None
         logger.info("浏览器已关闭")
 
-    async def search_jobs(
+    async def search_jobs_concurrent(
         self,
         keyword: str,
         city: Optional[str] = None,
-        page: int = 1
+        max_pages: int = 5
     ) -> List[Dict[str, Any]]:
         """
-        搜索职位
+        并发搜索多页职位
 
         Args:
             keyword: 搜索关键词
             city: 城市
-            page: 页码
+            max_pages: 最大页数
 
         Returns:
             职位列表
@@ -74,9 +78,39 @@ class JobCrawler:
         try:
             await self._init_browser()
 
+            # 并发爬取所有页面
+            tasks = []
+            for page in range(1, max_pages + 1):
+                tasks.append(self._search_single_page(keyword, city, page))
+
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            jobs = []
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.error("页面爬取失败: %s", result)
+                    continue
+                jobs.extend(result)
+
+            logger.info("并发搜索完成，总共找到 %d 个职位", len(jobs))
+            return jobs
+
+        except Exception as e:
+            logger.error("搜索职位失败: %s", e)
+            return []
+        finally:
+            await self._close_browser()
+
+    async def _search_single_page(
+        self,
+        keyword: str,
+        city: Optional[str] = None,
+        page: int = 1
+    ) -> List[Dict[str, Any]]:
+        """搜索单页（带信号量控制并发）"""
+        async with self._semaphore:
             jobs = []
 
-            # 只保留能获取 JD 的网站
             sources = [
                 ('zhaopin', self._search_zhaopin),
                 ('51job', self._search_51job),
@@ -84,7 +118,7 @@ class JobCrawler:
 
             for source_name, search_func in sources:
                 try:
-                    logger.info(f"从 {source_name} 搜索职位...")
+                    logger.info("从 %s 搜索第 %d 页...", source_name, page)
                     source_jobs = await asyncio.wait_for(
                         search_func(keyword, city, page),
                         timeout=30
@@ -92,21 +126,15 @@ class JobCrawler:
                     for job in source_jobs:
                         job['source'] = source_name
                     jobs.extend(source_jobs)
-                    logger.info(f"从 {source_name} 获取到 {len(source_jobs)} 个职位")
+                    logger.info("从 %s 第 %d 页获取到 %d 个职位",
+                               source_name, page, len(source_jobs))
                 except asyncio.TimeoutError:
-                    logger.warning(f"从 {source_name} 获取职位超时")
+                    logger.warning("从 %s 第 %d 页获取职位超时", source_name, page)
                 except Exception as e:
-                    logger.error(f"从 {source_name} 获取职位失败: {e}")
+                    logger.error("从 %s 第 %d 页获取职位失败: %s", source_name, page, e)
                     continue
 
-            logger.info(f"搜索完成，总共找到 {len(jobs)} 个职位")
             return jobs
-
-        except Exception as e:
-            logger.error(f"搜索职位失败: {e}")
-            return []
-        finally:
-            await self._close_browser()
 
     async def _search_zhaopin(
         self,
@@ -135,7 +163,7 @@ class JobCrawler:
                     if job:
                         jobs.append(job)
                 except Exception as e:
-                    logger.error(f"解析智联招聘职位项失败: {e}")
+                    logger.error("解析智联招聘职位项失败: %s", e)
                     continue
 
             return jobs
@@ -152,7 +180,6 @@ class JobCrawler:
             link = item.select_one('a.jobinfo__name')
             tags = item.select('.joblist-box__item-tag')
 
-            # 生成短 ID
             url = link.get('href', '') if link else ''
             short_id = hashlib.md5(url.encode()).hexdigest()[:16]
 
@@ -166,7 +193,7 @@ class JobCrawler:
                 'source_url': url,
             }
         except Exception as e:
-            logger.error(f"解析智联招聘项失败: {e}")
+            logger.error("解析智联招聘项失败: %s", e)
             return None
 
     async def _search_51job(
@@ -185,7 +212,6 @@ class JobCrawler:
             await page_obj.wait_for_selector('.joblist-item', timeout=10000)
             await asyncio.sleep(3)
 
-            # 使用 page.evaluate 在浏览器中执行提取（前程无忧是动态渲染）
             jobs = await page_obj.evaluate("""
                 () => {
                     const items = document.querySelectorAll('.joblist-item');
@@ -246,52 +272,105 @@ class JobCrawler:
         finally:
             await page_obj.close()
 
-    async def fetch_jd(self, source_url: str, source: str) -> Optional[str]:
+    async def fetch_jd_concurrent(
+        self,
+        jobs: List[Dict[str, Any]],
+        max_concurrent: int = 10
+    ) -> List[Dict[str, Any]]:
         """
-        获取职位描述（JD）
+        并发获取 JD
 
         Args:
-            source_url: 职位详情页 URL
-            source: 数据来源
+            jobs: 职位列表
+            max_concurrent: 最大并发数
 
         Returns:
-            JD 文本或 None
+            补充 JD 后的职位列表
         """
         try:
             await self._init_browser()
-            page_obj = await self.context.new_page()
+            semaphore = asyncio.Semaphore(max_concurrent)
 
-            try:
-                await page_obj.goto(source_url, wait_until='networkidle', timeout=self.timeout)
-                await asyncio.sleep(2)
+            async def fetch_single(job: Dict[str, Any]) -> Dict[str, Any]:
+                async with semaphore:
+                    if not job.get('source_url') or not job.get('source'):
+                        return job
 
-                content = await page_obj.content()
-                soup = BeautifulSoup(content, 'html.parser')
+                    try:
+                        jd = await asyncio.wait_for(
+                            self._fetch_jd_single(job['source_url'], job['source']),
+                            timeout=30
+                        )
+                        if jd:
+                            job['jd'] = jd
+                    except asyncio.TimeoutError:
+                        logger.warning("获取 JD 超时: %s", job.get('source_url'))
+                    except Exception as e:
+                        logger.error("获取 JD 失败: %s", e)
 
-                jd = None
+                    return job
 
-                if source == 'zhaopin':
-                    jd_elem = soup.select_one('.describtion__detail-content') or soup.select_one('[class*="detail"]')
-                    if jd_elem:
-                        jd = jd_elem.get_text(strip=True, separator='\n')
+            tasks = [fetch_single(job) for job in jobs]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
 
-                elif source == '51job':
-                    jd_elem = soup.select_one('.job-desc') or soup.select_one('[class*="detail"]')
-                    if jd_elem:
-                        jd = jd_elem.get_text(strip=True, separator='\n')
+            processed = []
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.error("JD 获取失败: %s", result)
+                    continue
+                processed.append(result)
 
-                if jd and len(jd) > 50:
-                    return jd[:5000]
-                return None
-
-            finally:
-                await page_obj.close()
+            logger.info("JD 获取完成: %d/%d", len(processed), len(jobs))
+            return processed
 
         except Exception as e:
-            logger.error(f"获取 JD 失败: {e}")
-            return None
+            logger.error("批量获取 JD 失败: %s", e)
+            return jobs
         finally:
             await self._close_browser()
+
+    async def _fetch_jd_single(self, source_url: str, source: str) -> Optional[str]:
+        """获取单个 JD"""
+        page_obj = await self.context.new_page()
+        try:
+            await page_obj.goto(source_url, wait_until='networkidle', timeout=self.timeout)
+            await asyncio.sleep(2)
+
+            content = await page_obj.content()
+            soup = BeautifulSoup(content, 'html.parser')
+
+            jd = None
+
+            if source == 'zhaopin':
+                jd_elem = soup.select_one('.describtion__detail-content') or soup.select_one('[class*="detail"]')
+                if jd_elem:
+                    jd = jd_elem.get_text(strip=True, separator='\n')
+
+            elif source == '51job':
+                jd_elem = soup.select_one('.job-desc') or soup.select_one('[class*="detail"]')
+                if jd_elem:
+                    jd = jd_elem.get_text(strip=True, separator='\n')
+
+            if jd and len(jd) > 50:
+                return jd[:5000]
+            return None
+
+        finally:
+            await page_obj.close()
+
+    # 兼容旧接口
+    async def search_jobs(
+        self,
+        keyword: str,
+        city: Optional[str] = None,
+        page: int = 1
+    ) -> List[Dict[str, Any]]:
+        """兼容旧版单页搜索"""
+        return await self.search_jobs_concurrent(keyword, city, max_pages=page)
+
+    async def fetch_jd(self, source_url: str, source: str) -> Optional[str]:
+        """兼容旧版单 JD 获取"""
+        return await self._fetch_jd_single(source_url, source)
 
 
 def run_async(coro):

@@ -27,20 +27,34 @@ class ResumeDatabase:
         self._init_engine()
 
     def _init_engine(self):
-        """初始化数据库连接"""
+        """初始化数据库连接（企业级连接池配置）"""
         try:
             self.engine = create_engine(
                 resume_db_config.connection_string,
-                pool_size=5,
-                max_overflow=10,
-                pool_pre_ping=True,
-                echo=False
+                # 连接池配置
+                pool_size=10,              # 基础连接数
+                max_overflow=20,           # 最大溢出连接
+                pool_timeout=30,           # 获取连接超时时间
+                pool_recycle=3600,         # 连接回收时间（1小时）
+                pool_pre_ping=True,        # 连接前 ping 检测
+                # 性能配置
+                echo=False,
+                # 连接参数
+                connect_args={
+                    "connect_timeout": 10,
+                    "read_timeout": 30,
+                    "write_timeout": 30,
+                } if resume_db_config.db_type == "mysql" else {}
             )
             Base.metadata.create_all(bind=self.engine)
-            self.SessionLocal = sessionmaker(bind=self.engine)
-            logger.info("简历数据库连接初始化完成")
+            self.SessionLocal = sessionmaker(
+                bind=self.engine,
+                autocommit=False,
+                autoflush=False
+            )
+            logger.info("简历数据库连接初始化完成: pool_size=10, max_overflow=20")
         except Exception as e:
-            logger.error(f"简历数据库连接初始化失败: {e}")
+            logger.error("简历数据库连接初始化失败: %s", e)
             raise
 
     @contextmanager

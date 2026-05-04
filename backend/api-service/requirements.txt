@@ -26,6 +26,13 @@ mammoth
 python-dotenv
 numpy
 aiosqlite
+
+# Monitoring & Metrics
+prometheus-client
+statsd
+
+# Message Queue
+kafka-python
 # QLoRA 微调（可选）
 tensorboard
 wandb

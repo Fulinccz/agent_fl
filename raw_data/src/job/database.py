@@ -27,20 +27,31 @@ class JobDatabase:
         self._init_engine()
 
     def _init_engine(self):
-        """初始化数据库连接"""
+        """初始化数据库连接（企业级连接池配置）"""
         try:
             self.engine = create_engine(
                 job_db_config.connection_string,
-                pool_size=5,
-                max_overflow=10,
+                pool_size=10,
+                max_overflow=20,
+                pool_timeout=30,
+                pool_recycle=3600,
                 pool_pre_ping=True,
-                echo=False
+                echo=False,
+                connect_args={
+                    "connect_timeout": 10,
+                    "read_timeout": 30,
+                    "write_timeout": 30,
+                } if job_db_config.db_type == "mysql" else {}
             )
             Base.metadata.create_all(bind=self.engine)
-            self.SessionLocal = sessionmaker(bind=self.engine)
-            logger.info("职位数据库连接初始化完成")
+            self.SessionLocal = sessionmaker(
+                bind=self.engine,
+                autocommit=False,
+                autoflush=False
+            )
+            logger.info("职位数据库连接初始化完成: pool_size=10, max_overflow=20")
         except Exception as e:
-            logger.error(f"职位数据库连接初始化失败: {e}")
+            logger.error("职位数据库连接初始化失败: %s", e)
             raise
 
     @contextmanager

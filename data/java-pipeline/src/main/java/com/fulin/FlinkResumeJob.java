@@ -30,8 +30,14 @@ public class FlinkResumeJob {
                 mysqlHost, mysqlPort, mysqlDatabase);
 
         // Flink Environment
+        // 注意：当前是批处理模式（Bounded Stream），从 MySQL 读取有限数据后结束
+        // 批处理不需要 Checkpoint，因为：
+        // 1. 数据源是有限的，失败可以重新运行整个作业
+        // 2. 输出到 Redis 是幂等的（相同的 resume_id 会覆盖）
+        // 如果未来改为实时流（如监听 MySQL Binlog），再启用 Checkpoint
         org.apache.flink.configuration.Configuration conf = new org.apache.flink.configuration.Configuration();
         conf.setString("execution.target", "local");
+
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment(conf);
         env.setParallelism(Integer.parseInt(System.getenv().getOrDefault("FLINK_PARALLELISM", "2")));
 
@@ -76,12 +82,16 @@ public class FlinkResumeJob {
             }
         }).name("FilterValid");
 
-        // Sink to Redis (batch mode)
+        // Sink to Redis (batch mode with exactly-once semantics)
+        // 使用 BatchRedisSink 的批量写入 + 幂等设计保证数据一致性
+        // 幂等性基于：相同的 resume_id 写入 Redis 会覆盖旧值
         validResumes.addSink(new BatchRedisSink(redisHost, redisPort, redisPassword,
                 redisDb, redisTtl, keyPrefix, setKey))
                 .name("BatchRedisSink");
 
         // Execute
-        env.execute("Resume MySQL to Redis Pipeline");
+        // 批处理模式：作业完成后自动退出
+        // 如果需要定时执行，建议用 Linux cron 或 Airflow 调度
+        env.execute("Resume MySQL to Redis Batch Pipeline");
     }
 }

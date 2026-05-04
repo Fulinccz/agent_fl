@@ -1,5 +1,5 @@
 """
-职位(JD)采集主程序
+职位(JD)采集主程序（并发优化版）
 """
 import asyncio
 import argparse
@@ -17,10 +17,10 @@ from config.settings import collector_config
 
 
 class JobCollector:
-    """职位采集器"""
+    """职位采集器（并发优化版）"""
 
     def __init__(self, db: JobDatabase = None):
-        self.crawler = JobCrawler()
+        self.crawler = JobCrawler(max_concurrent=5)
         self.db = db or JobDatabase()
 
     async def collect(
@@ -31,7 +31,7 @@ class JobCollector:
         fetch_jd: bool = True
     ) -> Dict[str, Any]:
         """
-        采集职位
+        采集职位（并发优化）
 
         Args:
             keywords: 关键词列表
@@ -46,33 +46,40 @@ class JobCollector:
         total_stats = {'total_fetched': 0, 'saved': 0, 'skipped': 0, 'failed': 0}
 
         for keyword in keywords:
-            logger.info(f"开始采集关键词: {keyword}")
-            for page in range(1, max_pages + 1):
-                jobs = await self.crawler.search_jobs(keyword, city, page)
-                if not jobs:
-                    break
+            logger.info("开始采集关键词: %s", keyword)
 
-                # 获取 JD
-                if fetch_jd:
-                    for job in jobs:
-                        if job.get('source_url') and job.get('source'):
-                            jd = await self.crawler.fetch_jd(
-                                job['source_url'],
-                                job['source']
-                            )
-                            job['jd'] = jd
+            # 1. 并发搜索所有页面
+            jobs = await self.crawler.search_jobs_concurrent(
+                keyword=keyword,
+                city=city,
+                max_pages=max_pages
+            )
 
-                # 每页采完立即写入数据库
-                db_jobs = [self._to_db_model(job) for job in jobs]
-                result = self.db.save_jobs(db_jobs)
+            if not jobs:
+                logger.warning("关键词 %s 未找到职位", keyword)
+                continue
 
-                total_stats['total_fetched'] += len(jobs)
-                total_stats['saved'] += result['saved']
-                total_stats['skipped'] += result['skipped']
-                total_stats['failed'] += result['failed']
+            logger.info("关键词 %s 找到 %d 个职位", keyword, len(jobs))
 
-                logger.info(f"第 {page} 页写入完成: +{result['saved']} 条"
-                            f" (累计: {total_stats['saved']} 条)")
+            # 2. 并发获取 JD
+            if fetch_jd:
+                logger.info("开始并发获取 JD...")
+                jobs = await self.crawler.fetch_jd_concurrent(
+                    jobs=jobs,
+                    max_concurrent=10
+                )
+
+            # 3. 批量写入数据库
+            db_jobs = [self._to_db_model(job) for job in jobs]
+            result = self.db.save_jobs(db_jobs)
+
+            total_stats['total_fetched'] += len(jobs)
+            total_stats['saved'] += result['saved']
+            total_stats['skipped'] += result['skipped']
+            total_stats['failed'] += result['failed']
+
+            logger.info("关键词 %s 处理完成: 获取 %d, 保存 %d",
+                       keyword, len(jobs), result['saved'])
 
         return total_stats
 
@@ -111,7 +118,7 @@ def main():
         fetch_jd=not args.no_jd
     ))
 
-    print(f"\n采集完成:")
+    print("\n采集完成:")
     print(f"  获取: {result['total_fetched']}")
     print(f"  保存: {result['saved']}")
     print(f"  跳过: {result['skipped']}")
