@@ -26,6 +26,7 @@ mammoth
 python-dotenv
 numpy
 aiosqlite
+redis
 
 # Monitoring & Metrics
 prometheus-client
