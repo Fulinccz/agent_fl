@@ -82,7 +82,6 @@ services:
     networks:
       - fulin-network
 
-  # Flink JobManager
   flink-jobmanager:
     image: flink:2.0.0-scala_2.12-java21
     container_name: fulin-flink-jobmanager
@@ -115,7 +114,6 @@ services:
     networks:
       - fulin-network
 
-  # Flink TaskManager
   flink-taskmanager:
     image: flink:2.0.0-scala_2.12-java21
     container_name: fulin-flink-taskmanager

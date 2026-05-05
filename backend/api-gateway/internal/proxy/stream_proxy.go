@@ -19,6 +19,11 @@ func SetConfig(cfg *config.Config) {
 	appConfig = cfg
 }
 
+// GetAppConfig 获取当前配置（用于测试）
+func GetAppConfig() *config.Config {
+	return appConfig
+}
+
 // StreamProxyConfig 流式代理配置
 type StreamProxyConfig struct {
 	TargetBaseURL string

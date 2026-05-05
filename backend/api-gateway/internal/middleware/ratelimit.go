@@ -1,27 +1,45 @@
 package middleware
 
 import (
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/time/rate"
 )
 
-// RateLimiterConfig 限流配置
 type RateLimiterConfig struct {
-	Rate    rate.Limit // 每秒请求数
-	Burst   int        // 突发请求数
+	Rate    rate.Limit
+	Burst   int
 	KeyFunc func(*gin.Context) string
 }
 
-// RateLimitMiddleware 返回限流中间件
 func RateLimitMiddleware(config RateLimiterConfig) gin.HandlerFunc {
-	limiter := rate.NewLimiter(config.Rate, config.Burst)
+	type visitor struct {
+		limiter  *rate.Limiter
+		lastSeen int64
+	}
+
+	var (
+		mu       sync.Mutex
+		visitors = make(map[string]*visitor)
+	)
 
 	return func(c *gin.Context) {
+		key := c.ClientIP()
 		if config.KeyFunc != nil {
-			_ = config.KeyFunc(c)
+			key = config.KeyFunc(c)
 		}
+
+		mu.Lock()
+		v, exists := visitors[key]
+		if !exists {
+			v = &visitor{limiter: rate.NewLimiter(config.Rate, config.Burst)}
+			visitors[key] = v
+		}
+		v.lastSeen = 1
+		limiter := v.limiter
+		mu.Unlock()
 
 		if !limiter.Allow() {
 			c.JSON(429, gin.H{
@@ -37,7 +55,6 @@ func RateLimitMiddleware(config RateLimiterConfig) gin.HandlerFunc {
 	}
 }
 
-// RequestLogger 请求日志中间件
 func RequestLogger() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
@@ -48,7 +65,6 @@ func RequestLogger() gin.HandlerFunc {
 		latency := time.Since(start)
 		statusCode := c.Writer.Status()
 
-		// 记录请求信息
 		c.Set("request_info", map[string]interface{}{
 			"path":      path,
 			"method":    c.Request.Method,

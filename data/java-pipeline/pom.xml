@@ -5,9 +5,11 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.fulin</groupId>
-    <artifactId>resume-pipeline</artifactId>
+    <artifactId>resume-batch-pipeline</artifactId>
     <version>1.0.0</version>
     <packaging>jar</packaging>
+
+    <description>Flink - 简历数据从 MySQL 同步到 Redis</description>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>
