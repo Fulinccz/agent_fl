@@ -1,20 +1,5 @@
 """
-Base Agent - Agent 抽象基类（LangChain 预留）
-
-职责：
-- 定义多技能 Agent 的统一接口
-- 支持工具调用和工作流编排
-- 为未来的 LangChain 集成预留接口
-
-设计原则：
-- 组合优于继承：Agent 通过组合使用 Tools 和 Provider
-- 策略模式：可切换不同的推理策略
-- 观察者模式：支持回调机制（用于流式输出、日志等）
-
-未来集成：
-- LangChain Agent
-- ReAct Agent
-- Plan-and-Execute Agent
+Base Agent
 """
 
 from __future__ import annotations
@@ -26,11 +11,6 @@ from .base_tool import BaseTool, ToolRegistry
 class BaseAgent(ABC):
     """
     Agent 基类
-    
-    多技能 Agent 的抽象定义，支持：
-    - 工具注册和管理
-    - 任务规划和执行
-    - 上下文管理
     """
     
     def __init__(

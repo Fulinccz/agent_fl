@@ -1,6 +1,5 @@
 """
 Local Provider 工具函数
-包含内容过滤、文本处理等辅助功能
 """
 
 from __future__ import annotations

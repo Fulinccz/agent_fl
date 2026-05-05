@@ -1,16 +1,3 @@
-"""
-Kafka 客户端（生产者）
-
-当前项目为本地演示环境，Kafka 主要用于：
-1. 健康检查验证服务可用性
-2. 预留异步解耦能力（后续可扩展）
-
-生产环境建议：
-- 部署独立 Consumer 服务（可水平扩展）
-- 配置死信队列（DLQ）处理失败消息
-- 使用 Schema Registry 管理消息格式
-"""
-
 import json
 import os
 from typing import Optional, Dict, Any
@@ -27,8 +14,6 @@ DEFAULT_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092
 
 
 class KafkaClient:
-    """Kafka 生产者客户端"""
-
     def __init__(
         self,
         bootstrap_servers: str = None,

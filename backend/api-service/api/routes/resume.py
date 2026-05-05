@@ -1,6 +1,8 @@
 """
 简历优化相关路由
 /resume/*
+
+多 Agent 协作简历优化流水线：评分 → 建议 → 润色。
 """
 
 from __future__ import annotations
@@ -14,21 +16,35 @@ from logger import get_logger
 from agents.langgraph.resume_agents import get_resume_workflow
 from .common import ResumeOptimizeRequest
 
-router = APIRouter()
+router = APIRouter(tags=["简历"])
 logger = get_logger(__name__)
 
 
-@router.post("/optimize/stream")
+@router.post(
+    "/optimize/stream",
+    summary="流式简历优化",
+    description="""
+启动多 Agent 协作的简历优化流程，流式返回各阶段结果。
+
+**执行阶段（按顺序）：**
+1. `score` - 简历评分（匹配度、完整性、专业度）
+2. `suggestions` - 优化建议（具体改进点）
+3. `polished` - 润色后的完整简历
+4. `complete` - 全部完成
+
+**请求参数：**
+- `resume`（必填）：简历原文
+- `jd`（可选）：目标职位描述，用于针对性优化
+- `position_type`（可选）：职位类型
+
+**响应格式：** `application/json`（每行一个 JSON 对象）
+    """,
+    responses={
+        200: {"description": "流式响应"},
+        500: {"description": "优化流程错误"},
+    },
+)
 async def resume_optimize_stream(request: Request, data: ResumeOptimizeRequest):
-    """
-    多 Agent 简历优化流式接口
-    
-    流式返回每个 Agent 的执行结果：
-    1. type="score" - 评分结果
-    2. type="suggestions" - 优化建议
-    3. type="polished" - 润色后的简历
-    4. type="complete" - 全部完成
-    """
     call_time = datetime.now().strftime('%H:%M:%S')
     logger.info(f"[{call_time}] Resume optimize stream started")
 

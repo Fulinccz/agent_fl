@@ -1,10 +1,5 @@
 """
-Agent Registry - Agent 工厂和注册中心
-
-设计模式：
-- 工厂模式：统一创建对象
-- 单例模式：全局唯一的 Registry
-- 注册表模式：动态管理组件
+Agent Registry
 """
 
 from __future__ import annotations
@@ -22,20 +17,7 @@ logger = get_logger(__name__)
 
 
 class AgentRegistry:
-    """
-    Agent 注册中心（增强版）
-    
-    功能：
-    - Provider 工厂：创建和管理模型提供者
-    - Tool 发现：查找和实例化工具
-    - 配置管理：集中管理配置信息
-    
-    未来扩展：
-    - 支持 LangChain Agent 创建
-    - 支持多 Provider 负载均衡
-    - 支持 Plugin 系统
-    """
-    
+
     _instance = None
     _providers: Dict[str, Any] = {}
     

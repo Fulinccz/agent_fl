@@ -1,8 +1,3 @@
-"""
-技能注册表和执行引擎
-集中管理所有简历优化技能
-"""
-
 from __future__ import annotations
 from typing import Dict, Any, Callable, Optional
 from logger import get_logger

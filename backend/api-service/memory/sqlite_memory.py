@@ -65,7 +65,9 @@ class SQLiteMemoryStore:
             max_history: 每个会话最多保留的对话轮数
             max_sessions: 最多保留的会话数量
         """
-        self.db_path = db_path or os.path.join(os.getcwd(), "data", "memory.db")
+        from services.config import AppSettings
+        config = AppSettings.load()
+        self.db_path = db_path or config.memory_db_path or os.path.join(os.getcwd(), "data", "memory.db")
         self.max_history = max_history
         self.max_sessions = max_sessions
         

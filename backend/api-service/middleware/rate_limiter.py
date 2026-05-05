@@ -14,16 +14,10 @@ class TokenBucket:
     """令牌桶限流算法"""
 
     def __init__(self, rate: float, capacity: int):
-        """
-        Args:
-            rate: 每秒产生令牌数
-            capacity: 桶容量
-        """
         self.rate = rate
         self.capacity = capacity
         self.tokens = capacity
         self.last_update = time.time()
-        self.lock = False  # 简化版，实际用 threading.Lock
 
     def acquire(self, tokens: int = 1) -> bool:
         now = time.time()
@@ -53,7 +47,13 @@ class RateLimiter:
 
     @staticmethod
     def _default_key_func(request: Request) -> str:
-        # 按 IP 限流
+        """按 IP 限流，优先读取 X-Forwarded-For"""
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        real_ip = request.headers.get("X-Real-IP")
+        if real_ip:
+            return real_ip.strip()
         client = request.client
         return client.host if client else "unknown"
 
@@ -65,7 +65,8 @@ class RateLimiter:
             )
         return self._buckets[key]
 
-    async def __call__(self, request: Request):
+    async def check(self, request: Request):
+        """检查是否允许通过，否则抛出 429"""
         key = self.key_func(request)
         bucket = self._get_bucket(key)
 
@@ -79,6 +80,24 @@ class RateLimiter:
                     "retry_after": int(1 / self.requests_per_second) + 1
                 }
             )
+
+    async def __call__(self, request: Request):
+        """FastAPI Dependency 用法"""
+        await self.check(request)
+
+
+def rate_limit(
+    requests_per_second: float = 10.0,
+    burst_size: int = 20,
+    key_func: Callable[[Request], str] = None
+):
+    """装饰器/依赖注入用法"""
+    limiter = RateLimiter(
+        requests_per_second=requests_per_second,
+        burst_size=burst_size,
+        key_func=key_func
+    )
+    return limiter
 
 
 # 默认限流器实例

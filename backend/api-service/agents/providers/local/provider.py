@@ -1,5 +1,5 @@
 """
-Local Provider - 本地模型提供者核心类
+Local Provider
 """
 
 from __future__ import annotations
@@ -28,7 +28,6 @@ logger = get_logger(__name__)
 
 
 class LocalProvider(BaseProvider):
-    """本地模型提供者 - 使用 transformers 库"""
 
     def __init__(self, model_name: str = "model_serving"):
         """Initialize local model provider."""

@@ -1,8 +1,5 @@
 """
 简单内存存储 - 用于快速测试
-
-使用内存字典存储对话历史，适合测试和轻量级场景。
-生产环境建议使用 SQLiteMemoryStore。
 """
 
 import json
@@ -42,20 +39,7 @@ class ConversationMemory:
 
 
 class SimpleMemoryStore:
-    """
-    简单内存存储
-    
-    使用字典存储对话历史，数据在内存中，重启后丢失。
-    适合测试和演示。
-    """
-    
     def __init__(self, max_history: int = 10):
-        """
-        初始化存储
-        
-        Args:
-            max_history: 每个会话最多保留的对话轮数
-        """
         self.max_history = max_history
         self._storage: Dict[str, List[ConversationMemory]] = {}
         self._sessions: Dict[str, Dict[str, Any]] = {}

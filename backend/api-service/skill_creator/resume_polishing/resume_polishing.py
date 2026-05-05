@@ -1,8 +1,3 @@
-"""
-简历润色技能实现
-将大白话转换为专业简历话术 - 分段处理版本
-"""
-
 from typing import Dict, Any, Optional
 from agents.registry import get_agent
 from rag.retriever import RAGRetriever
@@ -13,7 +8,6 @@ logger = get_logger(__name__)
 
 
 class ResumePolishingSkill:
-    """简历润色技能"""
     
     def __init__(self):
         self.agent = get_agent(provider="local")

@@ -28,6 +28,13 @@ numpy
 aiosqlite
 redis
 
+# Testing
+pytest
+pytest-asyncio
+pytest-cov
+httpx
+respx
+
 # Monitoring & Metrics
 prometheus-client
 statsd

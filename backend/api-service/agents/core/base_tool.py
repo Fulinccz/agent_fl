@@ -1,25 +1,5 @@
 """
-Base Tool - 工具抽象基类
-
-职责：
-- 定义工具的统一接口
-- 实现工具注册和发现机制
-- 为所有业务工具提供标准化的调用方式
-
-设计原则（参考 LangChain Tools）：
-- 每个工具只做一件事（单一职责）
-- 工具可插拔、可组合
-- 统一的输入输出格式
-- 支持自动文档生成
-
-使用示例：
-    class ResumeParserTool(BaseTool):
-        name = "resume_parser"
-        description = "解析简历，提取结构化信息"
-        
-        def execute(self, resume_content: str) -> Dict:
-            # 实现逻辑
-            return parsed_data
+Base Tool
 """
 
 from __future__ import annotations

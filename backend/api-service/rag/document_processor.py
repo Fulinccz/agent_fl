@@ -1,5 +1,4 @@
 """
-简历文档解析工具
 支持 .docx 和 .pdf 格式，提取技能栏和项目描述
 """
 
@@ -12,8 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 class ResumeParser:
-    """简历解析器"""
-    
     def __init__(self):
         """初始化解析器"""
         # 技能栏关键词
@@ -186,36 +183,6 @@ class ResumeParser:
         
         # 未找到明确章节，返回空
         return None
-        
-        # 如果没有找到明确的技能章节，尝试从内容中查找包含技术关键词的部分
-        lines = content.split('\n')
-        skill_lines = []
-        in_skill_section = False
-        
-        for i, line in enumerate(lines):
-            line = line.strip()
-            if not line:
-                continue
-                
-            # 检查是否是技能相关行
-            if any(re.search(keyword, line, re.IGNORECASE) for keyword in self.skill_keywords):
-                in_skill_section = True
-                continue
-            
-            # 如果在技能部分，收集内容
-            if in_skill_section:
-                # 检查是否遇到新的章节标题
-                if self._is_section_title(line):
-                    break
-                skill_lines.append(line)
-        
-        if skill_lines:
-            return '\n'.join(skill_lines)
-        
-        # 如果还是没找到，返回前 30% 的内容作为技能栏
-        lines = content.split('\n')
-        skill_lines = lines[:max(1, len(lines) // 3)]
-        return '\n'.join(skill_lines)
 
     def _extract_projects(self, content: str) -> Optional[str]:
         """提取项目描述内容"""

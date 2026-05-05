@@ -1,15 +1,5 @@
 """
-Base Provider - 模型提供者抽象基类
-
-职责：
-- 定义模型提供者的统一接口
-- 规范生成、流式生成、停止等核心方法
-- 为 LocalProvider 和 OnlineProvider 提供契约
-
-设计原则：
-- 接口隔离：只定义必要的方法
-- 依赖倒置：高层模块依赖此抽象，不依赖具体实现
-- 开放封闭：对扩展开放（新的 Provider），对修改封闭
+Base Provider
 """
 
 from __future__ import annotations
@@ -20,8 +10,6 @@ from typing import Optional, List, Dict, Generator, Any
 class BaseProvider(ABC):
     """
     模型提供者基类
-    
-    所有模型提供者（Local、OpenAI、Anthropic 等）都必须实现此接口
     """
     
     @abstractmethod

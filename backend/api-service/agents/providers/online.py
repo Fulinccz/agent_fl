@@ -1,14 +1,5 @@
 """
-Online Provider - OpenAI API 提供者
-
-职责：
-- 封装 OpenAI API 调用
-- 实现统一的提供者接口
-- 支持在线模型推理
-
-设计原则：
-- 继承 BaseProvider，与 LocalProvider 统一接口
-- 优雅降级：API Key 未设置时返回提示信息
+Online Provider
 """
 
 from __future__ import annotations
@@ -24,16 +15,8 @@ logger = get_logger(__name__)
 
 class OnlineProvider(BaseProvider):
     """
-    OpenAI 在线模型提供者
-    
-    特性：
-    - ✅ 支持 OpenAI GPT 系列
-    - ✅ 统一的提供者接口
-    - ⚠️ 需要 API Key
-    
-    使用方式：
-        provider = OnlineProvider(api_key="sk-xxx", model="gpt-4")
-        result = provider.generate("你好")
+    provider = OnlineProvider(api_key="sk-xxx", model="gpt-4")
+    result = provider.generate("你好")
     """
 
     def __init__(self, api_key: Optional[str] = None, model: str = "gpt-3.5-turbo"):

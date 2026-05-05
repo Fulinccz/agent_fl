@@ -1,5 +1,5 @@
 """
-Local Agent - 向后兼容的适配器类
+Local Agent
 """
 
 from __future__ import annotations
@@ -8,13 +8,6 @@ from .provider import LocalProvider
 
 
 class LocalAgent:
-    """
-    Local Agent - 向后兼容的适配器类
-    
-    此类是为了与旧代码兼容而保留
-    实际功能由 LocalProvider 实现
-    """
-
     def __init__(self, model_name: str = "model_serving"):
         """Initialize local agent."""
         self.provider = LocalProvider(model_name=model_name)

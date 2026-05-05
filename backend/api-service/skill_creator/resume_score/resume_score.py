@@ -1,8 +1,3 @@
-"""
-简历评分技能实现
-对简历进行多维度综合评分，提供量化评估和改进建议
-"""
-
 from typing import Dict, Any, Optional, List
 from agents.registry import get_agent
 from rag.retriever import RAGRetriever

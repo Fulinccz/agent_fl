@@ -6,9 +6,10 @@ logger = get_logger(__name__)
 
 class EmbeddingService:
     def __init__(self, model_name: str = None, device: str = "cpu"):
-        self.model_name = model_name or os.getenv(
-            "EMBEDDING_MODEL",
-            os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "ai", "models", "bge-small-zh"))
+        from services.config import AppSettings
+        config = AppSettings.load()
+        self.model_name = model_name or config.embedding_model or os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "..", "ai", "models", "bge-small-zh")
         )
         self.device = device
         self._model = None

@@ -1,6 +1,5 @@
 """
-技能初始化模块
-自动从 skill_creator 目录发现并注册所有技能
+从 skill_creator 目录发现并注册所有技能
 """
 
 import os
@@ -16,15 +15,7 @@ _skills_initialized = False
 
 
 def discover_skills():
-    """
-    自动发现 skill_creator 目录下的所有技能
-    
-    规则：
-    1. 遍历 skill_creator 下的所有子目录
-    2. 查找包含 SKILL.md 的目录
-    3. 查找对应的 Python 实现文件
-    4. 自动注册技能
-    """
+
     registry = get_skill_registry()
     skill_creator_dir = Path(__file__).parent
     

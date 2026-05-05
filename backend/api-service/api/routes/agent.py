@@ -1,6 +1,8 @@
 """
 Agent 生成相关路由
 /agent/*
+
+提供 LLM 推理能力，支持本地模型和 OpenAI 兼容接口。
 """
 
 from __future__ import annotations
@@ -15,15 +17,22 @@ from services.agent_service import AgentService
 from agents.registry import get_agent
 from .common import AgentGenerateRequest
 
-router = APIRouter()
+router = APIRouter(tags=["Agent"])
 logger = get_logger(__name__)
 
 agent_service = AgentService()
 
 
-@router.post("/generate")
+@router.post(
+    "/generate",
+    summary="文本生成",
+    description="调用 LLM 生成文本，返回完整结果",
+    responses={
+        200: {"description": "生成成功"},
+        500: {"description": "模型推理错误"},
+    },
+)
 async def agent_generate(request: AgentGenerateRequest):
-    """Agent 生成接口"""
     try:
         result = agent_service.generate(
             prompt=request.prompt,
@@ -36,9 +45,24 @@ async def agent_generate(request: AgentGenerateRequest):
         return {"error": str(e)}
 
 
-@router.post("/generate/stream")
+@router.post(
+    "/generate/stream",
+    summary="流式文本生成",
+    description="""
+流式调用 LLM，逐 chunk 返回生成结果。
+
+**事件类型：**
+- `token` / `content` - 文本片段
+- `complete` - 生成完成
+- `error` - 错误信息
+
+**响应格式：** `application/json`（每行一个 JSON 对象）
+    """,
+    responses={
+        200: {"description": "流式响应"},
+    },
+)
 async def agent_generate_stream(request: Request, data: AgentGenerateRequest):
-    """Agent 流式生成接口"""
     call_time = datetime.now().strftime('%H:%M:%S')
     logger.info(f"[{call_time}] Agent generate stream started")
 

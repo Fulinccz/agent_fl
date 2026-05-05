@@ -25,10 +25,12 @@ class RedisCache:
         default_ttl: int = 300,  # 默认5分钟
         key_prefix: str = "cache:"
     ):
-        self.host = host or os.getenv("REDIS_HOST", "localhost")
-        self.port = port or int(os.getenv("REDIS_PORT", "6379"))
-        self.db = db or int(os.getenv("REDIS_CACHE_DB", "1"))  # 使用 DB1 避免冲突
-        self.password = password or os.getenv("REDIS_PASSWORD", None)
+        from services.config import AppSettings
+        config = AppSettings.load()
+        self.host = host or config.redis_host
+        self.port = port or config.redis_port
+        self.db = db or config.redis_cache_db
+        self.password = password or config.redis_password
         self.default_ttl = default_ttl
         self.key_prefix = key_prefix
         self._client = None

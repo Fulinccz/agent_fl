@@ -1,12 +1,3 @@
-"""
-记忆管理器 - 高级对话记忆管理
-
-提供对话记忆的统一管理，包括：
-- 会话生命周期管理
-- 记忆摘要（当对话过长时生成摘要）
-- 多会话切换
-"""
-
 import uuid
 from typing import Dict, List, Optional, Any, Callable
 from datetime import datetime
@@ -17,15 +8,6 @@ logger = get_logger(__name__)
 
 
 class MemoryManager:
-    """
-    对话记忆管理器
-    
-    管理多个对话会话，支持：
-    - 创建/切换会话
-    - 自动会话清理
-    - 记忆摘要生成
-    """
-    
     def __init__(
         self,
         memory_store: Optional[SimpleMemoryStore] = None,
@@ -146,8 +128,6 @@ class MemoryManager:
     ) -> str:
         """
         获取或创建会话摘要
-        
-        注意：这里简化处理，实际可以使用 LLM 生成更好的摘要
         """
         session_info = self._active_sessions.get(session_id)
         
