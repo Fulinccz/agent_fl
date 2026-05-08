@@ -14,7 +14,7 @@ func CORS() gin.HandlerFunc {
 	// 从环境变量读取允许的域名，默认只允许本地
 	allowOrigins := os.Getenv("ALLOWED_ORIGINS")
 	if allowOrigins == "" {
-		allowOrigins = "http://localhost,http://localhost:3000"
+		allowOrigins = "http://localhost,http://localhost:3000,http://localhost:5173"
 	}
 
 	origins := strings.Split(allowOrigins, ",")

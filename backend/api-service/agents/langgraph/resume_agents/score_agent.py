@@ -47,7 +47,7 @@ class ResumeScoreAgent:
 2. 不要输出 markdown 代码块
 3. 确保是有效的 JSON 格式"""
 
-            result = self.llm.generate(prompt, deepThinking=False)
+            result = self.llm.generate(prompt, max_new_tokens=64)
 
             scores = self._parse_scores(result)
             overall_score = sum(scores.values()) / len(scores)

@@ -2,6 +2,7 @@
 fastapi
 uvicorn[standard]
 python-multipart
+python-jose[cryptography]
 # Pydantic
 pydantic
 pydantic-settings
@@ -27,6 +28,9 @@ python-dotenv
 numpy
 aiosqlite
 redis
+
+# Database ORM
+sqlalchemy
 
 # Testing
 pytest

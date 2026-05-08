@@ -1,5 +1,6 @@
 """工作流定义和对外接口"""
 from typing import Dict, Any, Optional, Generator
+from concurrent.futures import ThreadPoolExecutor
 
 from langgraph.graph import StateGraph, END
 
@@ -14,10 +15,29 @@ logger = get_logger(__name__)
 
 # 全局共享的LLM实例，避免重复加载模型
 _shared_llm_instance: Optional[Any] = None
+_model_loading = False
+_model_loaded = False
+
+
+def preload_model():
+    """后台预加载模型（在 lifespan 中调用）"""
+    global _shared_llm_instance, _model_loading, _model_loaded
+    if _model_loaded or _model_loading:
+        return
+    _model_loading = True
+    try:
+        logger.info("[workflow] 后台预加载LLM模型...")
+        _shared_llm_instance = get_agent(provider="local")
+        _model_loaded = True
+        logger.info("[workflow] LLM模型预加载完成")
+    except Exception as e:
+        logger.error(f"[workflow] 模型预加载失败: {e}")
+    finally:
+        _model_loading = False
 
 
 def get_shared_llm():
-    """获取全局共享的LLM实例"""
+    """获取全局共享的LLM实例（如未加载则同步加载）"""
     global _shared_llm_instance
     if _shared_llm_instance is None:
         logger.info("[workflow] 初始化全局共享LLM实例")
@@ -110,15 +130,32 @@ class ResumeOptimizationWorkflow:
             "current_step": "started"
         }
 
-        # Step 1: 评分
-        logger.info(f"[optimize_stream] Step 1: 简历评分")
+        # Step 1 & 2: 评分和 JD 匹配并行执行
+        logger.info(f"[optimize_stream] Step 1&2: 评分和JD匹配并行执行")
         score_agent = ResumeScoreAgent(llm=shared_llm)
-        state = score_agent.run(state)
-
-        if state.get("error"):
-            logger.error(f"[optimize_stream] 评分失败: {state['error']}")
-            yield {"type": "error", "message": state["error"]}
+        match_agent = JDMatchAgent(llm=shared_llm)
+        
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            score_future = executor.submit(score_agent.run, state.copy())
+            match_future = executor.submit(match_agent.run, state.copy())
+            
+            score_result = score_future.result()
+            match_result = match_future.result()
+        
+        # 合并结果
+        if score_result.get("error"):
+            logger.error(f"[optimize_stream] 评分失败: {score_result['error']}")
+            yield {"type": "error", "message": score_result["error"]}
             return
+        
+        state["score_result"] = score_result.get("score_result")
+        state["overall_score"] = score_result.get("overall_score")
+        
+        if match_result.get("error"):
+            logger.error(f"[optimize_stream] 匹配分析失败: {match_result['error']}")
+        
+        state["match_result"] = match_result.get("match_result")
+        state["suggestions"] = match_result.get("suggestions")
 
         logger.info(f"[optimize_stream] 评分完成: {state.get('overall_score')}")
         yield {
@@ -128,14 +165,6 @@ class ResumeOptimizationWorkflow:
                 "scores": state.get("score_result")
             }
         }
-
-        # Step 2: JD 匹配
-        logger.info(f"[optimize_stream] Step 2: JD 匹配分析")
-        match_agent = JDMatchAgent(llm=shared_llm)
-        state = match_agent.run(state)
-
-        if state.get("error"):
-            logger.error(f"[optimize_stream] 匹配分析失败: {state['error']}")
 
         logger.info(f"[optimize_stream] 匹配分析完成")
         yield {
@@ -174,12 +203,10 @@ class ResumeOptimizationWorkflow:
 
         # 最终清理后的结果
         logger.info(f"[optimize_stream] 完整生成内容长度: {len(accumulated_text)}")
-        logger.info(f"[optimize_stream] 清理前内容前500字符: {accumulated_text[:500]!r}")
         
         final_result = polish_agent._clean_result(accumulated_text, state["resume"])
         
         logger.info(f"[optimize_stream] 清理后内容长度: {len(final_result)}")
-        logger.info(f"[optimize_stream] 清理后内容前500字符: {final_result[:500]!r}")
         
         if not final_result or len(final_result) < 50:
             logger.warning(f"[optimize_stream] 清理后内容太短({len(final_result)}字符)，使用原始简历")

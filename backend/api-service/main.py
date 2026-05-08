@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 import uvicorn
 
 # Prometheus 指标（全局定义，避免重复创建）
-from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import Counter, Gauge, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
 REQUEST_COUNT = Counter(
     "http_requests_total",
@@ -21,7 +21,7 @@ REQUEST_DURATION = Histogram(
     "HTTP request duration",
     ["method", "endpoint"]
 )
-ACTIVE_REQUESTS = Counter(
+ACTIVE_REQUESTS = Gauge(
     "http_active_requests",
     "Currently active requests",
     ["method"]
@@ -51,6 +51,16 @@ async def lifespan(app: FastAPI):
         logger.info("Skill system initialized")
     except Exception as e:
         logger.error("Failed to initialize skill system: %s", e)
+
+    # 后台预加载 LLM 模型（避免第一次请求阻塞）
+    import threading
+    try:
+        from agents.langgraph.resume_agents.workflow import preload_model
+        thread = threading.Thread(target=preload_model, daemon=True)
+        thread.start()
+        logger.info("LLM model preloading started in background thread")
+    except Exception as e:
+        logger.error("Failed to start model preloading: %s", e)
 
     # 设置信号处理器（优雅关闭）
     def signal_handler(sig, frame):
@@ -201,15 +211,17 @@ async def trace_middleware(request: Request, call_next):
         clear_trace_id()
 
 
+_auth_middleware = AuthMiddleware(exempt_paths=[
+    "/health", "/ready", "/metrics",
+    "/docs", "/openapi.json", "/redoc",
+    "/api/v1/auth", "/api/auth",
+    "/api/chat", "/api/agent", "/api/resume", "/api/upload", "/api/skill",
+])
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     """JWT 认证中间件"""
-    auth = AuthMiddleware(exempt_paths=[
-        "/health", "/ready", "/metrics",
-        "/docs", "/openapi.json", "/redoc",
-        "/api/v1/auth", "/api/auth"
-    ])
-    return await auth(request, call_next)
+    return await _auth_middleware(request, call_next)
 
 
 @app.middleware("http")

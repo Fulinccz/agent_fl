@@ -4,6 +4,7 @@
 
 import json
 import os
+import time
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
@@ -39,12 +40,33 @@ class ConversationMemory:
 
 
 class SimpleMemoryStore:
-    def __init__(self, max_history: int = 10):
+    def __init__(self, max_history: int = 10, max_sessions: int = 1000):
         self.max_history = max_history
+        self.max_sessions = max_sessions
         self._storage: Dict[str, List[ConversationMemory]] = {}
         self._sessions: Dict[str, Dict[str, Any]] = {}
         
-        logger.info(f"SimpleMemoryStore initialized: max_history={max_history}")
+        logger.info(f"SimpleMemoryStore initialized: max_history={max_history}, max_sessions={max_sessions}")
+    
+    def _cleanup_old_sessions(self):
+        """清理最旧的会话，保持数量在限制内"""
+        if len(self._sessions) <= self.max_sessions:
+            return
+        
+        # 按更新时间排序，删除最旧的
+        sorted_sessions = sorted(
+            self._sessions.items(),
+            key=lambda x: x[1].get('updated_at', ''),
+            reverse=False
+        )
+        
+        to_remove = len(sorted_sessions) - self.max_sessions
+        for i in range(to_remove):
+            old_session_id = sorted_sessions[i][0]
+            del self._storage[old_session_id]
+            del self._sessions[old_session_id]
+        
+        logger.info(f"Cleaned up {to_remove} old sessions, remaining: {len(self._sessions)}")
     
     async def add_message(
         self,
@@ -75,6 +97,9 @@ class SimpleMemoryStore:
         # 限制历史长度
         if len(self._storage[session_id]) > self.max_history:
             self._storage[session_id] = self._storage[session_id][-self.max_history:]
+        
+        # 限制会话总数
+        self._cleanup_old_sessions()
         
         logger.debug(f"Message added to session {session_id}: {role}")
     

@@ -68,8 +68,8 @@ func ExecuteStreamProxy(c *gin.Context, config StreamProxyConfig) {
 		}
 	}
 
-	// 创建可取消的上下文
-	ctx, cancel := context.WithCancel(c.Request.Context())
+	// 创建可取消的上下文（5分钟超时）
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Minute)
 	defer cancel()
 	proxyReq = proxyReq.WithContext(ctx)
 
@@ -79,8 +79,10 @@ func ExecuteStreamProxy(c *gin.Context, config StreamProxyConfig) {
 		cancel()
 	}()
 
-	// 发送请求
-	client := &http.Client{}
+	// 发送请求（带超时）
+	client := &http.Client{
+		Timeout: 5 * time.Minute,
+	}
 	resp, err := client.Do(proxyReq)
 	if err != nil {
 		// 检查是否是上下文取消错误（客户端中止请求）
