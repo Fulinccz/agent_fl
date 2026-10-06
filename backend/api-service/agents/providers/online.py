@@ -20,18 +20,21 @@ class OnlineProvider(BaseProvider):
     """
 
     def __init__(self, api_key: Optional[str] = None, model: str = "gpt-3.5-turbo"):
-        try:
-            import openai
-        except ImportError:
-            openai = None
-
-        self._openai = openai
         self._api_key = api_key or os.getenv("OPENAI_API_KEY")
         self._model_name = model
         self._device = "cloud"
+        self._client = None
 
-        if self._openai and self._api_key:
-            self._openai.api_key = self._api_key
+        if self._api_key:
+            try:
+                # openai SDK >= 1.0 的客户端（DeepSeek 等 OpenAI 兼容服务同样适用）
+                from openai import OpenAI
+                self._client = OpenAI(
+                    api_key=self._api_key,
+                    base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+                )
+            except ImportError:
+                self._client = None
 
     @property
     def model_name(self) -> str:
@@ -70,20 +73,20 @@ class OnlineProvider(BaseProvider):
         if images:
             raise ValueError("当前仅支持文本输入")
 
-        if self._openai is None:
-            logger.error("OpenAI SDK 未安装，无法生成文本")
-            return "[openai-sdk-not-installed] " + prompt
+        if self._client is None:
+            logger.error("OpenAI SDK 未安装或 API Key 未设置，无法生成文本")
+            return "[openai-client-unavailable] " + prompt
 
-        if not self._api_key:
-            logger.error("OpenAI API Key 未设置")
-            return "[openai-api-key-not-set] " + prompt
-
-        resp = self._openai.ChatCompletion.create(
-            model=self._model_name,
-            messages=[{"role": "user", "content": prompt}],
-            **kwargs,
-        )
-        return resp.choices[0].message.content
+        try:
+            resp = self._client.chat.completions.create(
+                model=self._model_name,
+                messages=[{"role": "user", "content": prompt}],
+                **kwargs,
+            )
+            return resp.choices[0].message.content
+        except Exception as e:
+            logger.error(f"OpenAI API 调用失败：{e}")
+            raise RuntimeError(f"OpenAI API 调用失败：{e}") from e
 
     def generate_with_thoughts(
         self, 

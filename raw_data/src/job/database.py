@@ -1,6 +1,3 @@
-"""
-职位(JD)数据库管理
-"""
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from contextlib import contextmanager

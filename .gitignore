@@ -48,6 +48,10 @@ __pycache__/
 .eggs/
 dist/
 
+# Graph RAG local configs
+backend/api-service/rag/graph/config_local.py
+backend/api-service/rag/graph/*.local.py
+
 # Go files
 /vendor/
 /bin/

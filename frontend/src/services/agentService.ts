@@ -59,16 +59,6 @@ class AgentService {
   }
 
   /**
-   * 非流式简历优化
-   * 
-   * @param request 简历优化请求
-   * @returns 优化结果
-   */
-  async optimizeResume(request: ResumeOptimizeRequest) {
-    return resumeOptimizeApiClient.optimize(request);
-  }
-
-  /**
    * 上传文件并处理
    * 
    * @param request 上传请求
@@ -77,9 +67,10 @@ class AgentService {
    */
   async uploadAndProcess(
     request: UploadRequest,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    onToken?: (token: string) => void
   ): Promise<string> {
-    const result = await uploadApiClient.uploadFile(request, signal);
+    const result = await uploadApiClient.uploadFile(request, signal, onToken);
     return result.response;
   }
 }

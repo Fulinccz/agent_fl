@@ -1,0 +1,7 @@
+# 忽略本地配置文件（密码等敏感信息）
+config_local.py
+*.local.py
+
+# 忽略日志和临时文件
+*.log
+*.tmp

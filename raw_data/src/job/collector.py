@@ -1,6 +1,3 @@
-"""
-职位(JD)采集主程序（并发优化版）
-"""
 import asyncio
 import argparse
 from datetime import datetime

@@ -11,7 +11,7 @@ import json
 import asyncio
 from datetime import datetime
 from fastapi import APIRouter, UploadFile, File, Form, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 
 from logger import get_logger
 from services.agent_service import AgentService
@@ -63,13 +63,30 @@ async def upload_file_stream(
     call_time = datetime.now().strftime('%H:%M:%S')
     file_path = None
 
+    # 文件类型与大小校验
+    ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx", ".txt"}
+    MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"不支持的文件类型：{ext}，仅支持 {', '.join(ALLOWED_EXTENSIONS)}"},
+        )
+
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"文件过大（{len(content)//1024//1024}MB），最大允许 10MB"},
+        )
+
     try:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{timestamp}_{file.filename}"
         file_path = os.path.join(UPLOAD_DIR, filename)
 
         with open(file_path, "wb") as buffer:
-            content = await file.read()
             buffer.write(content)
 
         logger.info(f"[{call_time}] File uploaded: {file_path}")

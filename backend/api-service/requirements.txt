@@ -6,13 +6,9 @@ python-jose[cryptography]
 # Pydantic
 pydantic
 pydantic-settings
-# LLM & Transformers
+# LLM
 transformers
 torch
-accelerate
-bitsandbytes
-peft
-datasets
 # Embedding & Vector Search
 sentence-transformers
 faiss-cpu
@@ -25,33 +21,22 @@ python-docx
 mammoth
 # Utilities
 python-dotenv
+PyYAML
 numpy
+langfuse>=4,<5
 aiosqlite
 redis
-
+pymysql
 # Database ORM
 sqlalchemy
-
-# Testing
-pytest
-pytest-asyncio
-pytest-cov
-httpx
-respx
-
-# Monitoring & Metrics
+# Monitoring
 prometheus-client
-statsd
-
 # Message Queue
 kafka-python
-# QLoRA 微调（可选）
-tensorboard
-wandb
-rouge-score
-bert-score
 # LangGraph & LangChain
 langgraph
 langchain
 langchain-community
 langchain-core
+# Graph Database
+neo4j

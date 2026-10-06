@@ -1,6 +1,3 @@
-"""
-职位(JD)数据模型
-"""
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, Text, DateTime, JSON, Index
 from sqlalchemy.ext.declarative import declarative_base

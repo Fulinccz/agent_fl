@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 import torch
 from logger import get_logger
+from services.tracing import start_span, update_current_generation
 from ...core.base_provider import BaseProvider
 from .streamer import generate_stream
 
@@ -122,30 +123,12 @@ class LocalProvider(BaseProvider):
             raise
 
     def stop_generation(self):
-        """停止当前正在进行的生成任务"""
+        """停止当前正在进行的生成任务
+
+        实际停止由 generate_stream 内部循环轮询 _stop_generation 标志实现
+        （streamer/生成线程是流式函数的局部变量，无法从外部直接操作）。
+        """
         self._stop_generation = True
-
-        if self._streamer:
-            try:
-                if hasattr(self._streamer, 'stop'):
-                    self._streamer.stop()
-                    logger.info("Streamer stopped")
-                if hasattr(self._streamer, 'end'):
-                    self._streamer.end()
-            except Exception as e:
-                logger.error(f"Error stopping streamer: {e}")
-
-        if self._generate_thread and self._generate_thread.is_alive():
-            try:
-                res = ctypes.pythonapi.PyThreadState_SetAsyncExc(
-                    ctypes.c_long(self._generate_thread.ident),
-                    ctypes.py_object(SystemExit)
-                )
-                if res > 0:
-                    logger.info(f"Generate thread termination signal sent")
-            except Exception as e:
-                logger.warning(f"Failed to terminate thread: {e}")
-
         logger.info("用户请求停止生成")
 
     def _is_stop_requested(self) -> bool:
@@ -195,15 +178,30 @@ class LocalProvider(BaseProvider):
             input_length = inputs['input_ids'].shape[1]
             generated_tokens = outputs[0][input_length:]
             result = tokenizer.decode(generated_tokens, skip_special_tokens=True)
-            return result
+            return result, input_length, len(generated_tokens)
 
         try:
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(_generate_task, prompt, **kwargs)
-                result = future.result(timeout=timeout)
+            with start_span(
+                "generate-response",
+                as_type="generation",
+                input=prompt[:2000],
+                metadata={"model": self._model_name, "device": self._device,
+                          "provider": "local"},
+            ):
+                executor = ThreadPoolExecutor(max_workers=1)
+                try:
+                    future = executor.submit(_generate_task, prompt, **kwargs)
+                    result, in_tokens, out_tokens = future.result(timeout=timeout)
+                except TimeoutError:
+                    # 不等待生成线程结束（shutdown(wait=False)），立即抛出超时
+                    raise RuntimeError(f"模型推理超时，超过了 {timeout} 秒的限制")
+                finally:
+                    executor.shutdown(wait=False)
+                update_current_generation(
+                    output=result[:2000],
+                    usage={"input": in_tokens, "output": out_tokens},
+                )
                 return result
-        except TimeoutError:
-            raise RuntimeError(f"模型推理超时，超过了 {timeout} 秒的限制")
         except Exception as e:
             raise RuntimeError(f"Local transformers 生成失败：{e}") from e
 
@@ -222,13 +220,20 @@ class LocalProvider(BaseProvider):
             yield {"type": "error", "content": "本地模型尚未加载，无法执行生成。"}
             return
 
-        yield from generate_stream(
-            pipeline=self.transformers_pipeline,
-            prompt=prompt,
-            stop_generation_flag=self._is_stop_requested,
-            images=images,
-            **kwargs
-        )
+        with start_span(
+            "generate-response",
+            as_type="generation",
+            input=prompt[:2000],
+            metadata={"model": self._model_name, "device": self._device,
+                      "provider": "local", "stream": True},
+        ):
+            yield from generate_stream(
+                pipeline=self.transformers_pipeline,
+                prompt=prompt,
+                stop_generation_flag=self._is_stop_requested,
+                images=images,
+                **kwargs
+            )
 
     def generate_with_thoughts(self, prompt: str, **kwargs) -> Generator[Dict[str, Any], None, None]:
         """流式生成文本，支持思考过程"""

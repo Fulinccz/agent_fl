@@ -17,35 +17,10 @@ export interface ResumeOptimizeRequest {
   resume: string;
   jd?: string;
   position_type?: string;
-}
-
-export interface ResumeOptimizeResponse {
-  success: boolean;
-  overall_score?: {
-    score: number;
-    rating: string;
-    description: string;
-  };
-  scores?: {
-    completeness: number;
-    professionalism: number;
-    quantification: number;
-    matching: number;
-  };
-  suggestions?: Array<{
-    priority: number;
-    category: string;
-    suggestion: string;
-    example?: string;
-  }>;
-  optimized_resume?: string;
-  match_analysis?: {
-    match_score: number;
-    matched_keywords: string[];
-    missing_keywords: string[];
-    suggestions: string[];
-  };
-  error?: string;
+  /** 模型提供者：local（本地 Qwen）| deepseek（DeepSeek OpenAPI），不传用服务端默认 */
+  provider?: string;
+  /** 模型名称，不传用该提供者默认 */
+  model?: string;
 }
 
 export interface ResumeOptimizeEvent {

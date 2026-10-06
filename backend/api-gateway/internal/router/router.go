@@ -63,8 +63,15 @@ func SetupRouter(cfg *config.Config) *gin.Engine {
 		{
 			agent.POST("", proxy.PythonProxy())
 			agent.POST("/stream", proxy.PythonStreamProxy())
-			agent.POST("/upload", proxy.PythonProxy()) // 文件上传
-			agent.POST("/upload_stream", proxy.PythonStreamProxy()) // 文件上传流式
+			agent.POST("/upload_stream", proxy.PythonStreamProxy()) // 文件上传流式（multipart）
+		}
+
+		// 技能路由（意图识别 + 自动执行）
+		skill := api.Group("/skill")
+		{
+			skill.POST("/route", proxy.PythonProxy())
+			skill.POST("/execute/auto", proxy.PythonProxy())
+			skill.GET("/list", proxy.PythonProxy())
 		}
 
 		// 简历解析路由

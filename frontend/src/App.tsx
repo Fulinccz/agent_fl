@@ -2,11 +2,12 @@ import React, { useState, Suspense, useCallback } from 'react';
 import './App.css';
 
 // 导入新架构组件和 Hooks
-import { ChatInput, ChatOutput } from './components/chat';
+import { ChatInput, SkillRouteBadge } from './components/chat';
 import { Modal } from './components/common';
 import { useAbortController, useSubmitControl } from './hooks/useAbortController';
 import { useStreamResponse } from './hooks/useStreamResponse';
 import { useFileUpload } from './hooks/useFileUpload';
+import { useSkillRouter } from './hooks/useSkillRouter';
 import Logo from './assets/readyInClient/react.svg';
 
 const NonCriticalComponent = React.lazy(() => 
@@ -18,21 +19,33 @@ function App() {
   const [showNewChatModal, setShowNewChatModal] = useState(false);
   const [query, setQuery] = useState('');
   const [jd, setJd] = useState(''); // JD 输入
+  const [modelProvider, setModelProvider] = useState('local'); // 模型切换
   
   const { create, abort, reset: resetAbort } = useAbortController();
   const { canSubmit, markSubmitting, recordStopTime } = useSubmitControl();
   
   // 使用新的 useStreamResponse - 返回 score, suggestions, polished
-  const { 
-    score, 
-    suggestions, 
-    polished, 
-    isStreaming, 
-    startStream, 
-    clearOutput 
+  const {
+    score,
+    suggestions,
+    polished,
+    isStreaming,
+    startStream,
+    applyPolished,
+    clearOutput
   } = useStreamResponse();
+
+  const { uploadedFile, handleFileSelect, uploadFile, clearFile } = useFileUpload();
   
-  const { uploadedFile, handleFileSelect, clearFile } = useFileUpload();
+  // Skill Router - 意图识别
+  const { routeState, routeIntent, clearRoute } = useSkillRouter({
+    onRoute: (route) => {
+      console.log(`[SkillRouter] 识别到技能: ${route.skill} (来源: ${route.source}, 置信度: ${route.confidence})`);
+    },
+    onError: (error) => {
+      console.error('[SkillRouter] 路由错误:', error);
+    }
+  });
 
   const handleSubmit = useCallback(async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -42,22 +55,28 @@ function App() {
     
     markSubmitting(true);
     clearOutput();
+    clearRoute();
     
     const controller = create();
     
     try {
+      // 先进行意图识别
+      const route = await routeIntent(query);
+      console.log('[SkillRouter] 路由结果:', route);
+      
       if (uploadedFile) {
-        // 文件上传处理 - 读取文件内容
-        const fileContent = await uploadedFile.text();
-        await startStream({
-          resume: fileContent,
-          jd: jd || undefined
-        }, controller.signal);
+        // 文件上传：multipart 提交 → 后端解析 PDF/DOCX → 流式优化（结果上屏到润色区）
+        let acc = '';
+        await uploadFile(query, controller.signal, (token) => {
+          acc += token;
+        });
+        applyPolished(acc);
       } else {
         // 直接优化简历
         await startStream({
           resume: query,
-          jd: jd || undefined
+          jd: jd || undefined,
+          provider: modelProvider
         }, controller.signal);
       }
     } catch (error) {
@@ -68,7 +87,7 @@ function App() {
       markSubmitting(false);
       clearFile();
     }
-  }, [query, jd, uploadedFile, canSubmit, markSubmitting, clearOutput, create, startStream, clearFile]);
+  }, [query, jd, modelProvider, uploadedFile, canSubmit, markSubmitting, clearOutput, create, startStream, applyPolished, uploadFile, clearFile, routeIntent, clearRoute]);
 
   const handleStop = useCallback(() => {
     recordStopTime();
@@ -87,19 +106,6 @@ function App() {
     resetAbort();
     setShowNewChatModal(false);
   }, [clearOutput, clearFile, resetAbort]);
-
-  // 格式化评分显示
-  const formatScore = () => {
-    if (!score) return '';
-    const { overall_score, scores } = score;
-    return `综合评分: ${overall_score?.score}分 (${overall_score?.rating})
-
-各维度评分:
-- 完整性: ${scores?.completeness}分
-- 专业度: ${scores?.professionalism}分  
-- 量化程度: ${scores?.quantification}分
-- 匹配度: ${scores?.matching}分`;
-  };
 
   // 格式化建议显示
   const formatSuggestions = () => {
@@ -120,6 +126,18 @@ function App() {
       <div className="header">
         <img src={Logo} alt="Logo" className="logo" />
         <h1>Fulin AI</h1>
+        <div className="model-switcher">
+          <label htmlFor="model-provider" className="model-switcher-label">模型:</label>
+          <select
+            id="model-provider"
+            className="model-switcher-select"
+            value={modelProvider}
+            onChange={(e) => setModelProvider(e.target.value)}
+          >
+            <option value="local">本地 Qwen</option>
+            <option value="deepseek">DeepSeek</option>
+          </select>
+        </div>
       </div>
       
       <form onSubmit={(e) => handleSubmit(e)} className="form">
@@ -134,6 +152,7 @@ function App() {
               isLoading={isStreaming}
               uploadedFile={uploadedFile}
               onFileChange={handleFileSelect}
+              onFileClear={clearFile}
               onNewChat={handleNewChat}
               disabled={!canSubmit() && isStreaming}
             />
@@ -152,6 +171,11 @@ function App() {
           </div>
         </div>
       </form>
+
+      {/* Skill Router 意图识别状态 */}
+      <div className="skill-route-container">
+        <SkillRouteBadge routeState={routeState} />
+      </div>
 
       <div className="output-container">
         {/* 分区1：简历评分 - 紧凑单行显示 */}

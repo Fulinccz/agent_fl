@@ -1,13 +1,22 @@
 from typing import Optional, Dict, Any
 
-from agents.registry import get_agent
 from logger import get_logger
-from .exceptions import ServiceError
-from skill_creator.registry import get_skill_executor
-from skill_creator import init_skills
-from rag.document_processor import parse_resume
 
 logger = get_logger(__name__)
+
+
+class ServiceError(Exception):
+    """服务层错误，携带上下文信息。"""
+
+    def __init__(self, message: str, **context):
+        super().__init__(message)
+        self.context = context
+
+
+def _get_agent(provider: str = "local", model: Optional[str] = None):
+    """延迟导入 agents.registry，避免 services ↔ agents 循环导入"""
+    from agents.registry import get_agent
+    return get_agent(provider=provider, model=model)
 
 
 class AgentService:
@@ -15,6 +24,10 @@ class AgentService:
 
     def __init__(self):
         self.logger = logger
+        # 延迟导入 skillhub / rag，避免 services ↔ agents 循环导入
+        from skillhub.registry import get_skill_executor
+        from skillhub import init_skills
+
         self.skill_executor = get_skill_executor()
         # 初始化技能注册表
         init_skills()
@@ -23,7 +36,7 @@ class AgentService:
         self.logger.debug("AgentService.generate called prompt=%s provider=%s model=%s", prompt, provider, model)
 
         try:
-            agent = get_agent(provider=provider, model=model)
+            agent = _get_agent(provider=provider, model=model)
             result = agent.generate(prompt)
             self.logger.debug("Generated text length=%d", len(result) if isinstance(result, str) else 0)
             return result
@@ -38,6 +51,7 @@ class AgentService:
         try:
             # 解析简历文件，提取技能栏和项目描述
             self.logger.info("[generate_with_file] 开始解析简历...")
+            from rag.document_processor import parse_resume
             resume_data = parse_resume(file_path)
             skills = resume_data.get("skills", "")
             projects = resume_data.get("projects", "")
@@ -65,7 +79,8 @@ class AgentService:
             
             self.logger.info(f"[generate_with_file] 开始调用模型生成，prompt长度: {len(full_prompt)}")
             self.logger.debug(f"[generate_with_file] 完整prompt: {full_prompt[:500]}...")
-            
+
+            from agents.registry import get_agent
             agent = get_agent(provider=provider, model=model)
             result = agent.generate(full_prompt)
             

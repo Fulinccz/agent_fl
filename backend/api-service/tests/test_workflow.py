@@ -1,12 +1,12 @@
 import pytest
 from unittest.mock import MagicMock, patch
-from agents.langgraph.resume_agents.workflow import (
+from agents.skills.resume_agents.workflow import (
     ResumeOptimizationWorkflow,
     get_resume_workflow,
     optimize_stream,
-    get_shared_llm,
 )
-from agents.langgraph.resume_agents.state import ResumeState
+from agents.llm import get_shared_llm
+from agents.skills.resume_agents.state import ResumeState
 
 
 SAMPLE_RESUME = """
@@ -36,60 +36,34 @@ class TestResumeOptimizationWorkflow:
     @pytest.fixture(autouse=True)
     def _reset_globals(self):
         """每个测试前重置全局状态"""
-        import agents.langgraph.resume_agents.workflow as wf_module
-        wf_module._shared_llm_instance = None
+        import agents.skills.resume_agents.workflow as wf_module
+        import agents.llm as llm_mod
         wf_module._resume_workflow = None
+        llm_mod._shared_llm_instance = None
+        llm_mod._extra_llms.clear()
         yield
-        wf_module._shared_llm_instance = None
         wf_module._resume_workflow = None
+        llm_mod._shared_llm_instance = None
+        llm_mod._extra_llms.clear()
 
     # ---- 初始化测试 ----
 
     def test_workflow_initialization(self, mock_llm):
-        with patch("agents.langgraph.resume_agents.workflow.get_agent", return_value=mock_llm):
+        with patch("agents.registry.get_agent", return_value=mock_llm):
             workflow = ResumeOptimizationWorkflow()
             assert workflow is not None
-            assert workflow.workflow is not None
 
     def test_get_shared_llm_singleton(self, mock_llm):
-        with patch("agents.langgraph.resume_agents.workflow.get_agent", return_value=mock_llm) as mock_get:
+        with patch("agents.registry.get_agent", return_value=mock_llm) as mock_get:
             llm1 = get_shared_llm()
             llm2 = get_shared_llm()
             assert llm1 is llm2
             mock_get.assert_called_once()
 
-    # ---- optimize 测试 ----
-
-    def test_optimize_returns_success_structure(self, mock_llm):
-        with patch("agents.langgraph.resume_agents.workflow.get_agent", return_value=mock_llm):
-            workflow = ResumeOptimizationWorkflow()
-            result = workflow.optimize(SAMPLE_RESUME)
-            assert isinstance(result, dict)
-            assert "success" in result
-            assert "overall_score" in result
-            assert "scores" in result
-            assert "suggestions" in result
-            assert "optimized_resume" in result
-            assert "match_analysis" in result
-            assert "error" in result
-
-    def test_optimize_with_jd(self, mock_llm):
-        with patch("agents.langgraph.resume_agents.workflow.get_agent", return_value=mock_llm):
-            workflow = ResumeOptimizationWorkflow()
-            result = workflow.optimize(SAMPLE_RESUME, jd=SAMPLE_JD)
-            assert result["match_analysis"] is not None
-
-    def test_optimize_without_jd(self, mock_llm):
-        """无 JD 时不应崩溃"""
-        with patch("agents.langgraph.resume_agents.workflow.get_agent", return_value=mock_llm):
-            workflow = ResumeOptimizationWorkflow()
-            result = workflow.optimize(SAMPLE_RESUME, jd=None)
-            assert result["success"] is True
-
     # ---- optimize_stream 测试 ----
 
     def test_optimize_stream_yields_events(self, mock_llm):
-        with patch("agents.langgraph.resume_agents.workflow.get_agent", return_value=mock_llm):
+        with patch("agents.registry.get_agent", return_value=mock_llm):
             workflow = ResumeOptimizationWorkflow()
             events = list(workflow.optimize_stream(SAMPLE_RESUME))
             event_types = [e.get("type") for e in events]
@@ -100,7 +74,7 @@ class TestResumeOptimizationWorkflow:
 
     def test_optimize_stream_order(self, mock_llm):
         """流式输出顺序应为 score → suggestions → polished → complete"""
-        with patch("agents.langgraph.resume_agents.workflow.get_agent", return_value=mock_llm):
+        with patch("agents.registry.get_agent", return_value=mock_llm):
             workflow = ResumeOptimizationWorkflow()
             events = list(workflow.optimize_stream(SAMPLE_RESUME))
             types = [e["type"] for e in events]
@@ -115,7 +89,7 @@ class TestResumeOptimizationWorkflow:
     def test_optimize_stream_error_handling(self, mock_llm):
         """Agent 错误时应产生 error 类型事件"""
         mock_llm.generate.side_effect = RuntimeError("模型错误")
-        with patch("agents.langgraph.resume_agents.workflow.get_agent", return_value=mock_llm):
+        with patch("agents.registry.get_agent", return_value=mock_llm):
             workflow = ResumeOptimizationWorkflow()
             events = list(workflow.optimize_stream(SAMPLE_RESUME))
             error_events = [e for e in events if e.get("type") == "error"]
@@ -124,7 +98,7 @@ class TestResumeOptimizationWorkflow:
     # ---- 全局实例测试 ----
 
     def test_get_resume_workflow_returns_same_instance(self, mock_llm):
-        with patch("agents.langgraph.resume_agents.workflow.get_agent", return_value=mock_llm):
+        with patch("agents.registry.get_agent", return_value=mock_llm):
             w1 = get_resume_workflow()
             w2 = get_resume_workflow()
             assert w1 is w2
@@ -140,10 +114,12 @@ class TestOptimizeStreamConvenience:
             {"type": "token", "content": "结果"}
         ])
 
-        with patch("agents.langgraph.resume_agents.workflow.get_agent", return_value=mock_llm):
-            import agents.langgraph.resume_agents.workflow as wf_module
-            wf_module._shared_llm_instance = None
+        with patch("agents.registry.get_agent", return_value=mock_llm):
+            import agents.skills.resume_agents.workflow as wf_module
+            import agents.llm as llm_mod
             wf_module._resume_workflow = None
+            llm_mod._shared_llm_instance = None
+            llm_mod._extra_llms.clear()
 
             events = list(optimize_stream(SAMPLE_RESUME))
             assert len(events) > 0

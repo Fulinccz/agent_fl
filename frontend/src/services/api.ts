@@ -1,7 +1,6 @@
 import type {
   UploadRequest,
   ResumeOptimizeRequest,
-  ResumeOptimizeResponse,
   ResumeOptimizeEvent
 } from '../types';
 
@@ -18,14 +17,17 @@ class UploadApiClient {
 
   async uploadFile(
     request: UploadRequest,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    onToken?: (token: string) => void
   ): Promise<{ response: string }> {
     const formData = new FormData();
     formData.append('file', request.file);
     formData.append('query', request.query);
-    formData.append('provider', request.provider || 'local');
+    if (request.provider) formData.append('provider', request.provider);
+    if ((request as any).model) formData.append('model', (request as any).model);
 
-    const response = await fetch(`${this.baseURL}/agent/upload`, {
+    // 后端 /agent/upload_stream 返回 JSON-lines 流（每行一个事件对象）
+    const response = await fetch(`${this.baseURL}/agent/upload_stream`, {
       method: 'POST',
       body: formData,
       signal
@@ -44,7 +46,41 @@ class UploadApiClient {
       throw new Error(errorMessage);
     }
 
-    return response.json();
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('响应不支持流式读取');
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullText = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || ''; // 保留未完成的残行
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const event = JSON.parse(trimmed);
+          if (event.type === 'token' && event.content) {
+            fullText += event.content;
+            if (onToken) onToken(event.content);
+          } else if (event.type === 'error') {
+            throw new Error(event.message || event.content || '服务器处理出错');
+          }
+          // complete 等其他事件：文本已由 token 累积
+        } catch (e) {
+          if (e instanceof SyntaxError) continue; // 非法 JSON 行跳过
+          throw e;
+        }
+      }
+    }
+
+    return { response: fullText };
   }
 }
 
@@ -55,24 +91,6 @@ export class ResumeOptimizeApiClient {
 
   constructor(baseURL: string = baseUrl) {
     this.baseURL = baseURL;
-  }
-
-  /**
-   * 非流式简历优化
-   */
-  async optimize(request: ResumeOptimizeRequest): Promise<ResumeOptimizeResponse> {
-    const response = await fetch(`${this.baseURL}/resume/optimize`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(request)
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || 'Resume optimization failed');
-    }
-
-    return response.json();
   }
 
   /**

@@ -5,6 +5,5 @@ Local Provider 模块
 """
 
 from .provider import LocalProvider
-from .adapter import LocalAgent
 
-__all__ = ['LocalProvider', 'LocalAgent']
+__all__ = ['LocalProvider']

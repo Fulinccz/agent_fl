@@ -1,14 +1,19 @@
 from pydantic_settings import BaseSettings
 from typing import Optional
+from .app_config import ENV_FILE
 
 
 class AppSettings(BaseSettings):
-    """应用配置 - 全部支持环境变量覆盖"""
+    """基础设施配置（连接凭证/地址端口等敏感与环境差异项）
+
+    从仓库根目录 .env 加载，全部支持进程环境变量覆盖。
+    业务行为参数（模型/MAS/RAG/记忆）见 services/app_config.py + config.yaml
+    """
 
     # 基础服务
     env: str = "dev"
     host: str = "0.0.0.0"
-    port: int = 8000
+    port: int = 8080
     log_level: str = "INFO"
 
     # 模型
@@ -38,10 +43,22 @@ class AppSettings(BaseSettings):
     # SQLite Memory
     memory_db_path: Optional[str] = None
 
+    # Neo4j
+    neo4j_uri: str = "bolt://localhost:7687"
+    neo4j_user: str = "neo4j"
+    neo4j_password: str = "fulin123456"
+
     # JWT
     jwt_secret: str = "change-me-in-production"
 
-    model_config = {"extra": "ignore"}
+    # CORS（逗号分隔的域名列表，生产环境必须配置白名单）
+    cors_origins: str = "*"
+
+    model_config = {
+        "env_file": str(ENV_FILE),
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
 
     @classmethod
     def load(cls):

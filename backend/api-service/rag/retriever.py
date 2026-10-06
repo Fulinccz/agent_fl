@@ -45,8 +45,13 @@ class RAGRetriever:
     @property
     def document_processor(self):
         if self._document_processor is None:
-            from .document_processor import DocumentProcessor
-            self._document_processor = DocumentProcessor()
+            try:
+                from .document_processor import DocumentProcessor
+                self._document_processor = DocumentProcessor()
+            except ImportError:
+                # DocumentProcessor 未实现，知识库重建能力降级禁用
+                logger.warning("DocumentProcessor 不可用，跳过知识库重建（沿用已有向量库）")
+                return None
         return self._document_processor
     
     def initialize_knowledge_base(
@@ -72,7 +77,10 @@ class RAGRetriever:
             logger.info("Rebuilding knowledge base...")
             self.vector_store.delete_collection()
         
-        chunks = self.document_processor.process_directory(knowledge_dir)
+        processor = self.document_processor
+        if processor is None:
+            return {"status": "unavailable", "message": "DocumentProcessor 未实现，无法重建知识库"}
+        chunks = processor.process_directory(knowledge_dir)
         
         if not chunks:
             logger.warning("No documents found in knowledge directory")

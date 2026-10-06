@@ -1,0 +1,180 @@
+# Langfuse v4 自托管（本机适配：全部容器独立命名与网络，不与已有服务冲突）
+# 镜像清单（docker pull）：
+#   postgres:17 / clickhouse/clickhouse-server:25.12 / redis:8.4  —— 已就绪
+#   minio/minio:RELEASE.2025-09-07T16-13-09Z
+#   langfuse/langfuse:4
+#   langfuse/langfuse-worker:4
+
+name: langfuse
+
+services:
+  # ---------- 基础设施 ----------
+  langfuse-db:
+    image: postgres:17
+    container_name: langfuse-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse_local
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  langfuse-redis:
+    image: redis:8.4
+    container_name: langfuse-redis
+    restart: unless-stopped
+    # v4 worker 的 BullMQ 队列要求带密码的 Redis（REDIS_HOST/PORT/AUTH）
+    command: redis-server --appendonly yes --requirepass langfuse_redis_pass --maxmemory-policy noeviction
+    volumes:
+      - langfuse_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "langfuse_redis_pass", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  langfuse-clickhouse:
+    image: clickhouse/clickhouse-server:25.12
+    container_name: langfuse-clickhouse
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: langfuse_local
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    volumes:
+      - langfuse_ch:/var/lib/clickhouse
+      - langfuse_ch_logs:/var/log/clickhouse-server
+    ports:
+      - "127.0.0.1:8124:8123"   # 避开已有服务的 8123
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  langfuse-minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: langfuse-minio
+    restart: unless-stopped
+    command: server /data --address ":9000" --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio_root
+      MINIO_ROOT_PASSWORD: minio_root_pass_123
+    volumes:
+      - langfuse_minio:/data
+    ports:
+      - "127.0.0.1:9002:9000"   # S3 API（避开已有 9000）
+      - "127.0.0.1:9003:9001"   # Web 控制台
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # ---------- Langfuse ----------
+  langfuse-web:
+    image: langfuse/langfuse:4
+    container_name: langfuse-web
+    restart: unless-stopped
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment: &langfuse-env
+      HOSTNAME: "0.0.0.0"  # Next standalone 绑定全部网卡含 loopback；否则被 Docker 注入的容器ID 占用，容器内 healthcheck 连接被拒
+      NODE_ENV: production
+      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_SECRET: e233e40109b8807d5efaa7016768b4c3f549833b630cbc3e8e0610a163fa2c44
+      SALT: f64719cf90e601e2f9759d16b32c227d
+      ENCRYPTION_KEY: 97560e60234611c0df2775d0490ce5b20998f01ede12c5ad4fce04b108b15007
+      TELEMETRY_ENABLED: "false"
+      DATABASE_URL: postgresql://langfuse:langfuse_local@langfuse-db:5432/langfuse
+      # Redis：v4 统一用 HOST/PORT/AUTH（worker 的 BullMQ 队列不读 REDIS_URL）
+      REDIS_HOST: langfuse-redis
+      REDIS_PORT: "6379"
+      REDIS_AUTH: langfuse_redis_pass
+      REDIS_TLS_ENABLED: "false"
+      LANGFUSE_BULLMQ_SKIP_REDIS_VERSION_CHECK: "true"  # 镜像是 redis 8.4，跳过 7.x 版本校验
+      CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+      CLICKHOUSE_USER: langfuse
+      CLICKHOUSE_PASSWORD: langfuse_local
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
+      CLICKHOUSE_CLUSTER_ENABLED: "false"  # 单机部署：普通 MergeTree，不需要 ZooKeeper/Keeper
+      CLICKHOUSE_CLUSTER_NAME: default
+      # 对象存储（event / batch / media 三组）
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio_root
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: minio_root_pass_123
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_BATCH_EXPORT_ENABLED: "false"  # demo 不启用批量导出
+      LANGFUSE_S3_BATCH_EXPORT_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_BATCH_EXPORT_BUCKET: langfuse-batch
+      LANGFUSE_S3_BATCH_EXPORT_REGION: auto
+      LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID: minio_root
+      LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY: minio_root_pass_123
+      LANGFUSE_S3_BATCH_EXPORT_PREFIX: batches/
+      LANGFUSE_S3_BATCH_EXPORT_FORCE_PATH_STYLE: "true"
+      # media：external 为浏览器预签名地址（宿主映射 9002），internal 为容器内地址
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://localhost:9002
+      LANGFUSE_S3_MEDIA_UPLOAD_INTERNAL_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse-media
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: minio_root
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: minio_root_pass_123
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      # 首次启动自动初始化（免 UI 手动配置；v4 变量名 ORG_*，非 ORGANIZATION_*）
+      LANGFUSE_INIT_ORG_ID: fulin-org
+      LANGFUSE_INIT_ORG_NAME: FulinAI
+      LANGFUSE_INIT_PROJECT_ID: fulin-project
+      LANGFUSE_INIT_PROJECT_NAME: fulinai
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-fulin-local
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-fulin-local-6f3a9c821b74e5d0a1f2
+      LANGFUSE_INIT_USER_NAME: Fulin Admin
+      LANGFUSE_INIT_USER_EMAIL: admin@fulin.local
+      LANGFUSE_INIT_USER_PASSWORD: Fulin#68dc5294
+    healthcheck:
+      # 用 127.0.0.1 而非 localhost：busybox wget 的 localhost 优先解析到 IPv6 ::1，而 Next standalone 仅监听 IPv4，会误报 unhealthy
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/api/public/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:4
+    container_name: langfuse-worker
+    restart: unless-stopped
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+    environment: *langfuse-env
+
+volumes:
+  langfuse_pg:
+  langfuse_redis:
+  langfuse_ch:
+  langfuse_ch_logs:
+  langfuse_minio:

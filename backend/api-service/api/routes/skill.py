@@ -51,7 +51,21 @@ async def execute_skill(request: SkillExecuteRequest):
 @router.post(
     "/execute/auto",
     summary="自动识别并执行技能",
-    description="根据用户输入自动判断意图，选择合适的技能执行",
+    description="根据用户输入自动判断意图，选择合适的技能执行。返回结果包含路由决策信息和执行结果。",
+    responses={
+        200: {
+            "description": "执行成功",
+            "example": {
+                "route": {
+                    "skill": "resume-polishing",
+                    "confidence": 0.95,
+                    "source": "keyword",
+                    "reason": "关键词匹配: 润色, 简历"
+                },
+                "result": "技能执行结果..."
+            }
+        },
+    }
 )
 async def execute_skill_auto(user_input: str):
     try:
@@ -59,6 +73,32 @@ async def execute_skill_auto(user_input: str):
         return result
     except Exception as e:
         logger.error(f"Skill auto execute error: {e}")
+        return {"error": str(e)}
+
+
+@router.post(
+    "/route",
+    summary="意图路由（仅识别，不执行）",
+    description="根据用户输入进行意图识别，返回路由决策信息，但不执行技能。用于前端展示或调试。",
+    responses={
+        200: {
+            "description": "路由成功",
+            "example": {
+                "skill": "resume-polishing",
+                "confidence": 0.95,
+                "source": "keyword",
+                "reason": "关键词匹配: 润色, 简历",
+                "params": {}
+            }
+        },
+    }
+)
+async def route_intent(user_input: str):
+    try:
+        route_result = agent_service.skill_executor.auto_select_skill(user_input)
+        return route_result
+    except Exception as e:
+        logger.error(f"Intent route error: {e}")
         return {"error": str(e)}
 
 

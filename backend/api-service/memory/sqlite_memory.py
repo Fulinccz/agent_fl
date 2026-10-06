@@ -73,16 +73,26 @@ class SQLiteMemoryStore:
         
         # 确保目录存在
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        
+
         # 初始化数据库
         self._init_db()
-        
+
         logger.info(f"SQLiteMemoryStore initialized: {self.db_path}, max_history={max_history}")
-    
+
+    @asynccontextmanager
+    async def _connect(self):
+        """统一的连接管理：WAL 模式 + busy_timeout，支持并发读写"""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("PRAGMA journal_mode=WAL")
+            await db.execute("PRAGMA busy_timeout=5000")
+            await db.execute("PRAGMA foreign_keys=ON")
+            yield db
+
     def _init_db(self):
         """初始化数据库表"""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
             
             # 会话表
             cursor.execute("""
@@ -132,12 +142,14 @@ class SQLiteMemoryStore:
             content: 消息内容
             metadata: 可选的元数据
         """
-        async with aiosqlite.connect(self.db_path) as db:
-            # 确保会话存在
+        async with self._connect() as db:
+            # 确保会话存在（UPSERT：保留 created_at，仅刷新 updated_at）
             await db.execute(
                 """
-                INSERT OR REPLACE INTO sessions (session_id, updated_at, metadata)
+                INSERT INTO sessions (session_id, updated_at, metadata)
                 VALUES (?, CURRENT_TIMESTAMP, ?)
+                ON CONFLICT(session_id)
+                DO UPDATE SET updated_at = CURRENT_TIMESTAMP
                 """,
                 (session_id, json.dumps(metadata) if metadata else None)
             )
@@ -196,24 +208,25 @@ class SQLiteMemoryStore:
         Returns:
             对话历史列表
         """
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
+            # 取最近 limit 条再反转回时间正序（id 自增保证同秒内顺序稳定）
             query = """
-                SELECT role, content, timestamp, metadata 
-                FROM conversations 
-                WHERE session_id = ? 
-                ORDER BY timestamp ASC
+                SELECT role, content, timestamp, metadata
+                FROM conversations
+                WHERE session_id = ?
+                ORDER BY id DESC
             """
             params = [session_id]
-            
+
             if limit:
                 query += " LIMIT ?"
                 params.append(limit)
-            
+
             cursor = await db.execute(query, params)
             rows = await cursor.fetchall()
-            
+
             history = []
-            for row in rows:
+            for row in reversed(rows):
                 memory = ConversationMemory(
                     role=row[0],
                     content=row[1],
@@ -221,7 +234,7 @@ class SQLiteMemoryStore:
                     metadata=json.loads(row[3]) if row[3] else None
                 )
                 history.append(memory)
-            
+
             return history
     
     async def get_history_as_messages(
@@ -240,7 +253,7 @@ class SQLiteMemoryStore:
     
     async def clear_history(self, session_id: str):
         """清空指定会话的历史"""
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             await db.execute(
                 "DELETE FROM conversations WHERE session_id = ?",
                 (session_id,)
@@ -258,7 +271,7 @@ class SQLiteMemoryStore:
     
     async def list_sessions(self, limit: int = 100) -> List[Dict[str, Any]]:
         """列出所有会话"""
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             cursor = await db.execute(
                 """
                 SELECT session_id, created_at, updated_at, metadata 
@@ -288,12 +301,13 @@ class SQLiteMemoryStore:
         Args:
             days: 清理超过 N 天未活动的会话
         """
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             cursor = await db.execute(
                 """
-                SELECT session_id FROM sessions 
-                WHERE updated_at < datetime('now', '-{} days')
-                """.format(days)
+                SELECT session_id FROM sessions
+                WHERE updated_at < datetime('now', ?)
+                """,
+                (f"-{int(days)} days",)
             )
             rows = await cursor.fetchall()
             
@@ -305,7 +319,7 @@ class SQLiteMemoryStore:
     
     async def get_stats(self) -> Dict[str, int]:
         """获取存储统计信息"""
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connect() as db:
             cursor = await db.execute("SELECT COUNT(*) FROM sessions")
             session_count = (await cursor.fetchone())[0]
             

@@ -1,0 +1,22 @@
+# 生产依赖
+-r requirements.txt
+
+# 测试
+pytest
+pytest-asyncio
+pytest-cov
+httpx
+respx
+
+# 监控辅助
+statsd
+
+# QLoRA 微调（可选）
+accelerate
+bitsandbytes
+peft
+datasets
+tensorboard
+wandb
+rouge-score
+bert-score

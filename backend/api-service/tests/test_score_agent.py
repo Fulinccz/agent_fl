@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
-from agents.langgraph.resume_agents.score_agent import ResumeScoreAgent
-from agents.langgraph.resume_agents.state import ResumeState
+from agents.skills.resume_agents.score_agent import ResumeScoreAgent
+from agents.skills.resume_agents.state import ResumeState
 
 
 SAMPLE_RESUME = """
@@ -58,7 +58,7 @@ class TestResumeScoreAgent:
 
     def test_agent_auto_init_llm(self):
         """未传入 LLM 时应该自动从 registry 获取"""
-        with patch("agents.langgraph.resume_agents.score_agent.get_agent") as mock_get:
+        with patch("agents.skills.resume_agents.score_agent.get_agent") as mock_get:
             mock_get.return_value = self._make_mock_llm()
             agent = ResumeScoreAgent()
             mock_get.assert_called_once_with(provider="local")

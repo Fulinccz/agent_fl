@@ -9,9 +9,9 @@ from typing import Optional, Dict, Any
 from pathlib import Path
 
 # 导入新的架构组件
-from .providers.local import LocalProvider, LocalAgent
+from .providers.local import LocalProvider
 from .providers.online import OnlineProvider, OpenAIAgent
-from .core.base_tool import ToolRegistry as BaseToolRegistry
+from .providers.deepseek import DeepSeekProvider
 
 logger = get_logger(__name__)
 
@@ -20,20 +20,19 @@ class AgentRegistry:
 
     _instance = None
     _providers: Dict[str, Any] = {}
-    
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._initialized = False
         return cls._instance
-    
+
     def __init__(self):
         if self._initialized:
             return
-        
+
         self._initialized = True
         self._default_model = None
-        self._tool_registry = BaseToolRegistry()
         logger.info("AgentRegistry 初始化完成")
     
     @staticmethod
@@ -54,79 +53,46 @@ class AgentRegistry:
         )
     
     def get_provider(
-        self, 
-        provider: str = "local", 
+        self,
+        provider: str = "local",
         model: Optional[str] = None,
         **kwargs
     ):
         """
         获取模型提供者实例
-        
+
         Args:
-            provider: 提供者类型 ('local', 'online', 'openai', 'cloud')
+            provider: 提供者类型 ('local', 'deepseek', 'online', 'openai', 'cloud')
             model: 模型名称或路径
             **kwargs: 额外参数（如 api_key）
-            
+
         Returns:
-            Provider 实例 (LocalProvider 或 OnlineProvider)
+            Provider 实例 (LocalProvider / DeepSeekProvider / OnlineProvider)
         """
         import time
         call_time = time.strftime('%H:%M:%S')
         normalized = (provider or "").strip().lower()
-        
+
         logger.info(f"[{call_time}] === get_provider 被调用 ===")
         logger.info(f"[{call_time}] provider={normalized}, model={model}")
-        
+
+        if normalized == "deepseek":
+            logger.info(f"[{call_time}] Using DeepSeek provider (model={model or 'config default'})")
+            return DeepSeekProvider(
+                api_key=kwargs.get('api_key'),
+                model=model,
+            )
+
         if normalized in {"online", "openai", "cloud"}:
             logger.info(f"[{call_time}] Using Online provider (model={model or 'gpt-3.5-turbo'})")
-            
+
             api_key = kwargs.get('api_key')
             return OnlineProvider(api_key=api_key, model=model or "gpt-3.5-turbo")
         
         chosen_model = model or self._get_default_local_model()
         logger.info(f"[{call_time}] Using Local provider (model={chosen_model})")
-        
+
         return LocalProvider(model_name=chosen_model)
-    
-    def get_tool(self, tool_name: str, provider=None):
-        """
-        获取工具实例
-        
-        Args:
-            tool_name: 工具名称
-            provider: 模型提供者（可选）
-            
-        Returns:
-            Tool 实例
-        """
-        return self._tool_registry.get_tool(tool_name, provider=provider)
-    
-    def list_tools(self) -> list:
-        """列出所有可用工具"""
-        return self._tool_registry.list_tools()
-    
-    def create_resume_agent(self, provider=None):
-        """
-        创建简历优化 Agent（未来 LangChain 版本）
-        
-        TODO: 实现 LangChain ReAct Agent
-              - 自动选择合适的工具
-              - 多步骤工作流编排
-              - 记忆和上下文管理
-        """
-        tools = [
-            self.get_tool("resume_parser", provider),
-            self.get_tool("resume_scorer", provider),
-            self.get_tool("resume_optimizer", provider),
-            self.get_tool("text_polisher", provider),
-        ]
-        
-        # 返回工具列表（未来将包装为 LangChain Agent）
-        return {
-            "provider": provider,
-            "tools": [t.name for t in tools if t],
-            "description": "简历优化 Agent（包含解析、打分、优化、润色能力）"
-        }
 
 
 # 向后兼容：保留原有的 get_agent 函数
@@ -152,7 +118,7 @@ __all__ = [
     'AgentRegistry',
     'get_agent',
     'LocalProvider',
-    'LocalAgent',
     'OnlineProvider',
     'OpenAIAgent',
+    'DeepSeekProvider',
 ]

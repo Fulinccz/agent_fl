@@ -1,0 +1,70 @@
+# =====================================================================
+# FulinAI 应用配置（业务 / 行为参数）
+# ---------------------------------------------------------------------
+# 配置分层（业界惯例，优先级从低到高）：
+#   1. 代码默认值（services/app_config.py 中的字段默认值）
+#   2. 本文件 config.yaml（随代码版本管理，放非敏感的行为参数）
+#   3. 环境变量 / .env（敏感凭证 + 环境差异，前缀 FULIN_，双下划线分层）
+#      例：FULIN_MODELS__DEFAULT_PROVIDER=deepseek
+#          FULIN_RAG__TOP_K=5
+# 基础设施连接（MySQL/Redis/Kafka/Neo4j/JWT/服务端口）见仓库根目录 .env，
+# 由 services/config.py AppSettings 加载。
+# =====================================================================
+
+# ----------------------- 模型与 Provider -----------------------
+models:
+  # 默认模型提供者：local（本地 Qwen）| deepseek | openai
+  default_provider: local
+  local:
+    # ai/models 下的模型目录名
+    name: Qwen3___5-4B
+    # 生成参数
+    max_new_tokens: 128
+    temperature: 0.35
+    # 对话执行器的生成长度上限
+    chat_max_new_tokens: 512
+  deepseek:
+    # 成本开关：false 时请求切换 deepseek 自动回落本地模型（不产生任何 API 费用）
+    enabled: false
+    # DeepSeek OpenAPI（OpenAI 兼容协议）
+    model: deepseek-flash
+    base_url: https://api.deepseek.com
+    # 请求超时（秒）
+    timeout: 120
+    # 网络失败重试次数
+    max_retries: 2
+  openai:
+    model: gpt-4o-mini
+    base_url: https://api.openai.com/v1
+    timeout: 120
+    max_retries: 2
+
+# ----------------------- 多智能体编排（MAS）-----------------------
+mas:
+  # 调度总轮数上限（防死循环）
+  max_total_rounds: 12
+  # 重规划次数上限
+  max_replans: 1
+  # 流式输出节流：每累积 N 字符下发一次
+  stream_chunk_chars: 50
+  reflection:
+    # 是否启用 LLM 反思（false 时仅用规则）
+    use_llm: true
+    # 失败重试次数上限
+    max_retries: 1
+
+# ----------------------- RAG 检索 -----------------------
+rag:
+  # chat 端点检索条数
+  top_k: 3
+  # 混合检索条数
+  hybrid_top_k: 5
+  vector_weight: 0.5
+  graph_weight: 0.5
+  # 默认检索模式：vector | graph | hybrid | merge
+  default_mode: hybrid
+
+# ----------------------- 记忆 -----------------------
+memory:
+  # 会话上下文最大长度（字符）
+  max_context_length: 4000

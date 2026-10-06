@@ -1,11 +1,13 @@
 import time
 import uuid
 import asyncio
-import signal
+
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
 import uvicorn
 
 # Prometheus 指标（全局定义，避免重复创建）
@@ -35,9 +37,6 @@ from middleware.auth import AuthMiddleware
 
 logger = get_logger(__name__)
 
-# 优雅关闭标志
-_is_shutting_down = False
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -46,7 +45,7 @@ async def lifespan(app: FastAPI):
 
     # 初始化 skill 系统
     try:
-        from skill_creator import init_skills
+        from skillhub import init_skills
         init_skills()
         logger.info("Skill system initialized")
     except Exception as e:
@@ -55,34 +54,27 @@ async def lifespan(app: FastAPI):
     # 后台预加载 LLM 模型（避免第一次请求阻塞）
     import threading
     try:
-        from agents.langgraph.resume_agents.workflow import preload_model
+        from agents.llm import preload_model
         thread = threading.Thread(target=preload_model, daemon=True)
         thread.start()
         logger.info("LLM model preloading started in background thread")
     except Exception as e:
         logger.error("Failed to start model preloading: %s", e)
 
-    # 设置信号处理器（优雅关闭）
-    def signal_handler(sig, frame):
-        global _is_shutting_down
-        _is_shutting_down = True
-        logger.info("Received shutdown signal, stopping...")
-
-    signal.signal(signal.SIGTERM, signal_handler)
-    signal.signal(signal.SIGINT, signal_handler)
+    # 注意：不要在此处注册 signal 处理器——会覆盖 uvicorn 的优雅退出
+    # （uvicorn 的 handle_exit 负责 should_exit → 请求排空 → lifespan shutdown）
 
     yield
 
-    # 关闭阶段
+    # 关闭阶段（uvicorn 完成请求排空后执行）
     logger.info("api-service shutting down")
 
-    # 等待活跃请求完成（最多 30 秒）
-    wait_time = 0
-    while wait_time < 30:
-        # 检查是否还有活跃请求
-        # 实际项目中可以用 asyncio.Task 计数
-        await asyncio.sleep(1)
-        wait_time += 1
+    # 立即上报 Langfuse 缓冲的跟踪数据
+    from services.tracing import flush as flush_traces
+    flush_traces()
+
+    # 短暂缓冲：等待残留异步任务收尾（uvicorn 已负责请求排空）
+    await asyncio.sleep(2)
 
     logger.info("Shutdown complete")
 
@@ -136,6 +128,27 @@ app = FastAPI(
     redoc_url="/redoc",
     openapi_url="/openapi.json",
 )
+
+# CORS 配置（生产环境通过 CORS_ORIGINS 环境变量设置白名单）
+_cors_origins = AppSettings.load().cors_origins
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins.split(",") if _cors_origins != "*" else ["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    """安全响应头中间件"""
+    response = await call_next(request)
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
 
 
 @app.middleware("http")
@@ -244,20 +257,55 @@ async def metrics_middleware(request: Request, call_next):
     response = await call_next(request)
     duration = time.time() - start_time
 
+    # 用路由模板（如 /api/chat/sessions/{session_id}/history）作为标签，
+    # 避免动态路径导致 Prometheus 时间序列无界增长
+    route = request.scope.get("route")
+    endpoint = getattr(route, "path", None) or request.url.path
+
     REQUEST_COUNT.labels(
         method=request.method,
-        endpoint=request.url.path,
+        endpoint=endpoint,
         status=response.status_code
     ).inc()
     REQUEST_DURATION.labels(
         method=request.method,
-        endpoint=request.url.path
+        endpoint=endpoint
     ).observe(duration)
 
     return response
 
 
 app.include_router(router, prefix="/api")
+
+
+# ============ 统一异常处理 ============
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """请求参数校验失败统一返回格式"""
+    return JSONResponse(
+        status_code=422,
+        content={
+            "code": 422,
+            "message": "请求参数校验失败",
+            "detail": exc.errors(),
+            "trace_id": get_trace_id(),
+        },
+    )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """全局未捕获异常统一返回格式，避免堆栈泄露"""
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "code": 500,
+            "message": "服务器内部错误",
+            "trace_id": get_trace_id(),
+        },
+    )
 
 
 @app.get(
@@ -272,13 +320,6 @@ async def health_check():
         "version": "1.0.0",
         "timestamp": time.time(),
     }
-
-    # 如果正在关闭，返回不健康
-    if _is_shutting_down:
-        return JSONResponse(
-            status_code=503,
-            content={**checks, "status": "shutting_down"}
-        )
 
     return {**checks, "status": "healthy"}
 
@@ -298,9 +339,12 @@ async def readiness_check():
     try:
         from sqlalchemy import create_engine, text
         engine = create_engine(config.mysql_dsn, pool_pre_ping=True)
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        checks["mysql"] = "ok"
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            checks["mysql"] = "ok"
+        finally:
+            engine.dispose()  # 探针不持有连接池，避免每次请求累积连接
     except Exception as e:
         checks["mysql"] = f"error: {str(e)}"
 

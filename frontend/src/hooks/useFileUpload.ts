@@ -7,7 +7,11 @@ interface UseFileUploadReturn {
   isUploading: boolean;
   uploadError: string | null;
   handleFileSelect: (event: React.ChangeEvent<HTMLInputElement>) => void;
-  uploadFile: (query: string, signal?: AbortSignal) => Promise<string>;
+  uploadFile: (
+    query: string,
+    signal?: AbortSignal,
+    onToken?: (token: string) => void
+  ) => Promise<string>;
   clearFile: () => void;
 }
 
@@ -35,7 +39,8 @@ export function useFileUpload(): UseFileUploadReturn {
 
   const uploadFile = useCallback(async (
     query: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    onToken?: (token: string) => void
   ): Promise<string> => {
     if (!uploadedFile) throw new Error('No file selected');
 
@@ -45,7 +50,8 @@ export function useFileUpload(): UseFileUploadReturn {
     try {
       const result = await agentService.uploadAndProcess(
         { file: uploadedFile, query },
-        signal
+        signal,
+        onToken
       );
       
       setIsUploading(false);

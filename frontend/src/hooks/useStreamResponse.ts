@@ -6,14 +6,17 @@ interface UseStreamResponseOptions {
   onScoreUpdate?: (score: { overall_score: any; scores: any }) => void;
   onSuggestionsUpdate?: (suggestions: { suggestions: any; match_analysis: any }) => void;
   onPolishedUpdate?: (polished: { optimized_resume: string }) => void;
+  onStreamError?: (error: string) => void;
 }
 
 interface UseStreamResponseReturn {
   score: { overall_score: any; scores: any } | null;
   suggestions: { suggestions: any; match_analysis: any } | null;
   polished: { optimized_resume: string } | null;
+  error: string | null;
   isStreaming: boolean;
   startStream: (request: ResumeOptimizeRequest, signal?: AbortSignal) => Promise<void>;
+  applyPolished: (text: string) => void;
   clearOutput: () => void;
 }
 
@@ -23,6 +26,7 @@ export function useStreamResponse(
   const [score, setScore] = useState<{ overall_score: any; scores: any } | null>(null);
   const [suggestions, setSuggestions] = useState<{ suggestions: any; match_analysis: any } | null>(null);
   const [polished, setPolished] = useState<{ optimized_resume: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   
   const scoreRef = useRef<{ overall_score: any; scores: any } | null>(null);
@@ -36,6 +40,7 @@ export function useStreamResponse(
     setScore(null);
     setSuggestions(null);
     setPolished(null);
+    setError(null);
     scoreRef.current = null;
     suggestionsRef.current = null;
     polishedRef.current = null;
@@ -63,7 +68,7 @@ export function useStreamResponse(
           // 避免重复设置相同内容
           const currentText = polishedRef.current?.optimized_resume || '';
           const newText = data?.optimized_resume || '';
-          
+
           // 只有当内容真正变化时才更新
           if (newText !== currentText) {
             polishedRef.current = data;
@@ -72,10 +77,33 @@ export function useStreamResponse(
               options.onPolishedUpdate(data);
             }
           }
+        },
+        undefined,
+        (msg: string) => {
+          // 后端 error 事件：上屏给用户
+          setError(msg);
+          if (options.onStreamError) {
+            options.onStreamError(msg);
+          }
         }
       );
+    } catch (e: any) {
+      const msg = e?.message || '请求失败';
+      setError(msg);
+      if (options.onStreamError) {
+        options.onStreamError(msg);
+      }
     } finally {
       setIsStreaming(false);
+    }
+  }, [options]);
+
+  const applyPolished = useCallback((text: string) => {
+    const data = { optimized_resume: text };
+    polishedRef.current = data;
+    setPolished(data);
+    if (options.onPolishedUpdate) {
+      options.onPolishedUpdate(data);
     }
   }, [options]);
 
@@ -83,6 +111,7 @@ export function useStreamResponse(
     setScore(null);
     setSuggestions(null);
     setPolished(null);
+    setError(null);
     scoreRef.current = null;
     suggestionsRef.current = null;
     polishedRef.current = null;
@@ -92,8 +121,10 @@ export function useStreamResponse(
     score,
     suggestions,
     polished,
+    error,
     isStreaming,
     startStream,
+    applyPolished,
     clearOutput
   };
 }

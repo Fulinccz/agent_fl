@@ -8,6 +8,7 @@ interface ChatInputProps {
   isLoading: boolean;
   uploadedFile: File | null;
   onFileChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  onFileClear?: () => void;
   onNewChat: () => void;
   disabled?: boolean;
   deepThinking?: boolean;
@@ -22,6 +23,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
   isLoading,
   uploadedFile,
   onFileChange,
+  onFileClear,
   onNewChat,
   disabled = false,
   deepThinking = false,
@@ -93,9 +95,9 @@ const ChatInput: React.FC<ChatInputProps> = ({
             {uploadedFile && (
               <div className="file-info">
                 <span className="file-name">{uploadedFile.name}</span>
-                <button 
+                <button
                   className="remove-file"
-                  onClick={() => onFileChange({ target: { files: {} } } as any)}
+                  onClick={() => onFileClear?.()}
                   title="移除文件"
                 >
                   ✕

@@ -1,9 +1,3 @@
-"""
-职位(JD)爬虫 - 智联招聘 + 前程无忧
-基于 Playwright + BeautifulSoup 实现
-优化版：并发爬取 + 浏览器复用
-"""
-
 import asyncio
 import hashlib
 from typing import List, Dict, Any, Optional
@@ -19,7 +13,6 @@ from src.logger import logger
 
 
 class JobCrawler:
-    """职位爬虫（并发优化版）"""
 
     def __init__(self, headless: bool = True, timeout: int = 30000, max_concurrent: int = 5):
         self.headless = headless

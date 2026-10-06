@@ -1,3 +1,93 @@
+/* ==================== Skill Router 样式 ==================== */
+
+/* 意图识别状态容器 */
+.skill-route-container {
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto 1rem;
+  padding: 0 1rem;
+}
+
+/* 技能路由徽章 */
+.skill-route-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  background-color: var(--card-bg);
+  border: 1px solid var(--border-color);
+  font-size: 0.85em;
+  color: var(--text-color);
+  box-shadow: var(--shadow-sm);
+  transition: all 0.3s ease;
+}
+
+.skill-route-badge.routing {
+  background-color: rgba(100, 108, 255, 0.1);
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+}
+
+.skill-route-badge.error {
+  background-color: rgba(255, 68, 68, 0.1);
+  border-color: #ff4444;
+  color: #ff4444;
+}
+
+/* 路由标签 */
+.route-label {
+  color: var(--text-secondary);
+  font-size: 0.9em;
+}
+
+/* 技能名称 */
+.route-skill {
+  font-weight: 600;
+  color: var(--primary-color);
+}
+
+/* 来源标签 */
+.route-source {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.8em;
+  font-weight: 500;
+}
+
+/* 置信度 */
+.route-confidence {
+  color: var(--text-secondary);
+  font-size: 0.85em;
+}
+
+/* 原因说明 */
+.route-reason {
+  color: var(--text-secondary);
+  font-size: 0.8em;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 加载动画 */
+.route-spinner {
+  display: inline-block;
+  animation: spin 1s linear infinite;
+  font-size: 1.1em;
+}
+
+/* 路由图标 */
+.route-icon {
+  font-size: 1.1em;
+}
+
+/* 路由文本 */
+.route-text {
+  font-size: 0.9em;
+}
+
 /* 全局样式 */
 :root {
   --primary-color: #646cff;
@@ -79,6 +169,32 @@ body {
   color: var(--text-color);
 }
 
+/* 模型切换器 */
+.model-switcher {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.model-switcher-label {
+  font-size: 0.875rem;
+  color: var(--text-color);
+  opacity: 0.8;
+}
+.model-switcher-select {
+  padding: 0.35rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  background: var(--bg-color, transparent);
+  color: var(--text-color);
+  font-size: 0.875rem;
+  cursor: pointer;
+  outline: none;
+}
+.model-switcher-select:focus {
+  border-color: #4f8cff;
+}
+
 /* 头部操作按钮 */
 .header-actions {
   margin-top: 1rem;
@@ -99,104 +215,30 @@ body {
 }
 .history-button:hover {
   border-color: var(--primary-color);
-  background-color: var(--border-color);
+  color: var(--primary-color);
 }
 
-/* 历史记录容器 */
-.history-container {
-  width: 600px;
+/* 表单样式 */
+.form {
+  width: 100%;
+  max-width: 900px;
   margin: 0 auto 2rem;
-  padding: 1rem;
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  background-color: var(--bg-color);
-  box-shadow: var(--shadow-sm);
-}
-
-.history-container h3 {
-  color: var(--text-color);
-  margin-top: 0;
-  margin-bottom: 1rem;
-  text-align: left;
-}
-
-/* 无历史记录提示 */
-.no-history {
-  color: var(--text-secondary);
-  text-align: center;
-  padding: 2rem;
-}
-
-/* 历史记录列表 */
-.history-list {
-  max-height: 400px;
-  overflow-y: auto;
-}
-
-/* 历史记录项 */
-.history-item {
-  padding: 0.75rem;
-  margin-bottom: 0.5rem;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  background-color: var(--card-bg);
-  cursor: pointer;
-  transition: all 0.2s;
-  text-align: left;
-}
-.history-item:hover {
-  border-color: var(--primary-color);
-  background-color: var(--border-color);
-}
-.history-item:last-child {
-  margin-bottom: 0;
-}
-
-/* 输入框容器 */
-.input-container {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--border-color);
-  border-radius: 16px;
-  overflow: hidden;
-  box-shadow: var(--shadow-sm);
-  transition: all 0.3s ease;
-  background-color: var(--card-bg);
-}
-
-.input-container:focus-within {
-  border-color: var(--primary-color);
-  box-shadow: 0 0 0 3px rgba(100, 108, 255, 0.1), var(--shadow-md);
-}
-
-/* JD 输入框包装器 */
-.jd-input-wrapper {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--border-color);
-  border-radius: 16px;
-  overflow: hidden;
-  box-shadow: var(--shadow-sm);
-  transition: all 0.3s ease;
-  background-color: var(--card-bg);
-}
-
-.jd-input-wrapper:focus-within {
-  border-color: var(--primary-color);
-  box-shadow: 0 0 0 3px rgba(100, 108, 255, 0.1), var(--shadow-md);
 }
 
 /* JD 输入框样式 */
+.jd-input-wrapper {
+  width: 100%;
+  height: 100%;
+}
+
 .jd-input {
-  padding: 16px;
-  border: none;
-  font-size: 0.95em;
   width: 100%;
   height: 100%;
   min-height: 120px;
-  box-sizing: border-box;
+  padding: 12px 16px;
+  border: none;
+  border-radius: 12px;
+  font-size: 1em;
   font-family: inherit;
   line-height: 1.5;
   resize: none;
@@ -306,24 +348,24 @@ body {
   background-color: var(--border-color);
 }
 .attachment-button.disabled {
-  cursor: not-allowed;
   opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* 文件信息样式 */
 .file-info {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 8px;
   margin-left: 8px;
   padding: 4px 8px;
   background-color: var(--file-bg);
   border: 1px solid var(--file-border);
-  border-radius: 6px;
-  font-size: 0.85em;
+  border-radius: 4px;
 }
 
 .file-name {
+  font-size: 0.85em;
   color: var(--text-color);
   max-width: 150px;
   overflow: hidden;
@@ -337,7 +379,7 @@ body {
   color: var(--text-secondary);
   cursor: pointer;
   padding: 0;
-  font-size: 0.9em;
+  font-size: 1em;
   line-height: 1;
 }
 .remove-file:hover {
@@ -742,279 +784,4 @@ body {
   line-height: 1.6;
   margin: 0;
   font-size: 0.9em;
-}
-
-.project-item ul,
-.project-item ol {
-  margin: 0;
-  padding-left: 1.25rem;
-}
-
-.project-item li {
-  color: var(--text-secondary);
-  line-height: 1.6;
-  margin-bottom: 0.25rem;
-  font-size: 0.9em;
-}
-
-/* 模态框遮罩 */
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: rgba(0, 0, 0, 0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  animation: fadeIn 0.2s ease-out;
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-.modal {
-  background: linear-gradient(135deg, var(--card-bg) 0%, rgba(40, 40, 40, 0.95) 100%);
-  border-radius: 16px;
-  padding: 2.5rem 2rem 2rem;
-  max-width: 420px;
-  width: 90%;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  animation: slideUp 0.3s ease-out;
-}
-
-@keyframes slideUp {
-  from {
-    opacity: 0;
-    transform: translateY(20px) scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-.modal h3 {
-  margin: 0 0 1rem 0;
-  color: var(--text-color);
-  font-size: 1.25rem;
-  font-weight: 600;
-  text-align: center;
-}
-
-.modal p {
-  margin: 0 0 1.5rem 0;
-  color: var(--text-secondary);
-  line-height: 1.5;
-  text-align: center;
-}
-
-.modal-actions {
-  display: flex;
-  gap: 12px;
-  justify-content: center;
-}
-
-.modal-actions button {
-  padding: 0.75rem 1.5rem;
-  border-radius: 10px;
-  font-size: 0.95rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.modal-cancel {
-  background-color: transparent;
-  border: 1px solid var(--border-color);
-  color: var(--text-secondary);
-}
-
-.modal-cancel:hover {
-  background-color: var(--border-color);
-  border-color: var(--border-hover);
-  color: var(--text-color);
-  transform: translateY(-2px);
-}
-
-.modal-confirm {
-  background: linear-gradient(135deg, #4a4a4a 0%, #3a3a3a 100%);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  color: white;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-}
-
-.modal-confirm:hover {
-  background: linear-gradient(135deg, #5a5a5a 0%, #4a4a4a 100%);
-  border-color: rgba(255, 255, 255, 0.2);
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-}
-
-/* 发送图标样式 */
-.send-icon {
-  width: 20px;
-  height: 20px;
-  fill: currentColor;
-}
-
-/* 文件预览区域 */
-.file-preview {
-  margin: 1rem auto;
-  max-width: 600px;
-  border: 1px solid var(--border-color);
-  border-radius: 12px;
-  overflow: hidden;
-  background-color: var(--card-bg);
-}
-
-.file-preview-header {
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: var(--text-color);
-  padding: 16px 20px 12px;
-  background: linear-gradient(to right, var(--file-bg), transparent);
-  border-bottom: 1px solid var(--border-color);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.file-preview-content {
-  padding: 16px 20px;
-  max-height: 300px;
-  overflow-y: auto;
-  color: var(--text-color);
-  line-height: 1.6;
-  font-size: 0.9em;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-}
-
-/* 响应式调整 */
-@media (max-width: 768px) {
-  .input-row {
-    flex-direction: column;
-    width: 100%;
-    padding: 0 1rem;
-  }
-  
-  .input-section {
-    width: 100%;
-  }
-  
-  .input-section.jd-section {
-    width: 100%;
-  }
-  
-  .output-container {
-    width: 100%;
-    padding: 0 1rem;
-    border-radius: 12px;
-  }
-  
-  .output-section {
-    min-height: auto;
-  }
-  
-  .suggestions-section {
-    max-height: 250px;
-  }
-  
-  .polished-section {
-    max-height: 400px;
-  }
-  
-  .score-header,
-  .section-header {
-    padding: 10px 16px;
-  }
-  
-  .section-content {
-    padding: 12px 16px;
-  }
-  
-  .history-container {
-    width: 100%;
-    margin: 0 1rem 2rem;
-  }
-  
-  .output-box {
-    width: 100%;
-    margin: 0 1rem;
-  }
-  
-  .how-to-use {
-    margin: 0 1rem;
-    padding: 1.5rem;
-  }
-  
-  .input-container,
-  .jd-input-wrapper {
-    width: 100%;
-  }
-  
-  .form-actions {
-    padding: 8px 12px;
-  }
-  
-  .attachment-button,
-  .send-button {
-    width: 32px;
-    height: 32px;
-  }
-  
-  .new-chat-button,
-  .deep-think-button {
-    padding: 5px 10px;
-    font-size: 0.8em;
-  }
-  
-  .modal {
-    padding: 2rem 1.5rem 1.5rem;
-    margin: 1rem;
-  }
-  
-  .modal-actions {
-    flex-direction: column;
-  }
-  
-  .modal-actions button {
-    width: 100%;
-  }
-}
-
-/* 滚动条样式 */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: var(--bg-color);
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--border-color);
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--border-hover);
-}
-
-/* 选中文字样式 */
-::selection {
-  background-color: rgba(100, 108, 255, 0.3);
-  color: var(--text-color);
 }

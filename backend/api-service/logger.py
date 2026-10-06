@@ -2,33 +2,34 @@ import json
 import logging
 import os
 import sys
-import threading
 import time
 import uuid
+from contextvars import ContextVar
 from typing import Optional, Dict, Any
 
 DEFAULT_LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
-# Thread-local storage for trace context
-_local = threading.local()
+# 协程安全的 trace 上下文（asyncio 并发请求互不串扰）
+_trace_id_var: ContextVar[str] = ContextVar("trace_id", default="")
 
 
 def get_trace_id() -> str:
-    """获取当前线程的 trace_id"""
-    if not hasattr(_local, "trace_id"):
-        _local.trace_id = str(uuid.uuid4())[:16]
-    return _local.trace_id
+    """获取当前请求上下文的 trace_id"""
+    trace_id = _trace_id_var.get()
+    if not trace_id:
+        trace_id = str(uuid.uuid4())[:16]
+        _trace_id_var.set(trace_id)
+    return trace_id
 
 
 def set_trace_id(trace_id: str):
-    """设置当前线程的 trace_id"""
-    _local.trace_id = trace_id
+    """设置当前请求上下文的 trace_id"""
+    _trace_id_var.set(trace_id)
 
 
 def clear_trace_id():
-    """清除当前线程的 trace_id"""
-    if hasattr(_local, "trace_id"):
-        delattr(_local, "trace_id")
+    """清除当前请求上下文的 trace_id"""
+    _trace_id_var.set("")
 
 
 class JSONFormatter(logging.Formatter):
