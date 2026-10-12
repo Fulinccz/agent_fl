@@ -1,0 +1,134 @@
+{
+  "description": "简历 Agent 评测集：覆盖简历评分 / JD匹配 / 简历润色三类。ground_truth 用于确定性规则校验（锚点取自评测指令中的核心契约词，跨模型稳健），语义质量由 LLM-as-Judge 评估。",
+  "cases": [
+    {
+      "id": "polish_001",
+      "category": "resume_polish",
+      "input": "张三，3年后端开发。技能：Java、Spring Boot、MySQL、Redis。项目：负责公司订单系统后端开发，使用Spring Boot搭建服务，优化了慢查询，接口响应变快。",
+      "ground_truth": {
+        "must_contain": ["Java", "Spring Boot"],
+        "structure": ["技能", "项目"],
+        "forbidden": ["精通一切", "保证录用", "10年经验"],
+        "min_length": 30
+      }
+    },
+    {
+      "id": "polish_002",
+      "category": "resume_polish",
+      "input": "李四，2年前端。技能：JavaScript、React、TypeScript、Webpack。项目：参与企业后台管理系统开发，负责多个业务模块的页面实现和性能优化。",
+      "ground_truth": {
+        "must_contain": ["React", "JavaScript"],
+        "structure": ["技能", "项目"],
+        "forbidden": ["保证录用", "精通所有语言"],
+        "min_length": 30
+      }
+    },
+    {
+      "id": "polish_003",
+      "category": "resume_polish",
+      "input": "王五，1年测试工程师。技能：Python、Selenium、pytest。项目：为电商核心链路编写自动化测试用例，发现并跟踪多个线上缺陷。",
+      "ground_truth": {
+        "must_contain": ["Python", "测试"],
+        "structure": ["技能", "项目"],
+        "forbidden": ["架构师", "十年经验", "保证录用"],
+        "min_length": 30
+      }
+    },
+    {
+      "id": "polish_004",
+      "category": "resume_polish",
+      "input": "赵六，4年算法工程师。技能：Python、PyTorch、推荐系统、CTR预估。项目：负责信息流推荐模型迭代，优化特征工程，线上CTR有提升。",
+      "jd": "推荐算法工程师，要求熟悉深度学习、CTR模型",
+      "ground_truth": {
+        "must_contain": ["PyTorch", "推荐"],
+        "structure": ["技能", "项目"],
+        "forbidden": ["保证录用"],
+        "min_length": 30
+      }
+    },
+    {
+      "id": "score_001",
+      "category": "resume_score",
+      "input": "张三，3年后端开发。技能：Java、Spring Boot、MySQL、Redis、Kafka。项目：负责订单系统，日均订单百万级，做了服务拆分和缓存优化。教育：本科，某大学计算机科学与技术。",
+      "ground_truth": {
+        "must_contain": ["分", "建议"],
+        "forbidden": ["保证录用"],
+        "min_length": 20
+      }
+    },
+    {
+      "id": "score_002",
+      "category": "resume_score",
+      "input": "李四，应届生。技能：Java基础、了解Spring。教育：本科。无实习经历，做过课程设计，一个图书管理系统。",
+      "ground_truth": {
+        "must_contain": ["分", "建议"],
+        "forbidden": ["保证录用"],
+        "min_length": 20
+      }
+    },
+    {
+      "id": "score_003",
+      "category": "resume_score",
+      "input": "王五，5年大数据开发。技能：Hadoop、Spark、Flink、Hive、Kafka。项目：主导数据仓库建设，支持PB级数据处理，优化任务性能降低成本。",
+      "ground_truth": {
+        "must_contain": ["分", "建议"],
+        "forbidden": ["保证录用"],
+        "min_length": 20
+      }
+    },
+    {
+      "id": "score_004",
+      "category": "resume_score",
+      "input": "赵六，2年产品经理。技能：需求分析、Axure、数据分析。项目：负责工具类App从0到1，协调研发上线，日活逐步增长。",
+      "ground_truth": {
+        "must_contain": ["分", "建议"],
+        "forbidden": ["保证录用"],
+        "min_length": 20
+      }
+    },
+    {
+      "id": "match_001",
+      "category": "jd_match",
+      "input": "张三，3年后端开发。技能：Java、Spring Boot、MySQL、Redis。项目：订单系统后端，服务拆分、缓存优化。",
+      "jd": "高级Java后端工程师，要求精通Java、Spring Cloud微服务、MySQL、Redis、消息队列，有高并发经验",
+      "ground_truth": {
+        "must_contain": ["匹配", "差距"],
+        "forbidden": ["保证录用"],
+        "min_length": 20
+      }
+    },
+    {
+      "id": "match_002",
+      "category": "jd_match",
+      "input": "李四，2年前端。技能：React、TypeScript。",
+      "jd": "Python后端工程师，要求Django、PostgreSQL、Docker、Kubernetes",
+      "ground_truth": {
+        "must_contain": ["匹配", "差距"],
+        "forbidden": ["保证录用"],
+        "min_length": 20
+      }
+    },
+    {
+      "id": "match_003",
+      "category": "jd_match",
+      "input": "王五，4年算法工程师。技能：Python、PyTorch、推荐系统、CTR预估、特征工程。",
+      "jd": "推荐算法工程师，要求熟悉深度学习、CTR模型、PyTorch、推荐系统，有大型项目经验优先",
+      "ground_truth": {
+        "must_contain": ["匹配", "差距"],
+        "forbidden": ["保证录用"],
+        "min_length": 20
+      }
+    },
+    {
+      "id": "match_004",
+      "category": "jd_match",
+      "input": "赵六，1年测试工程师。技能：Python、Selenium、pytest。",
+      "jd": "测试开发工程师，要求Python、自动化测试框架、CI/CD、接口测试",
+      "ground_truth": {
+        "must_contain": ["匹配", "差距"],
+        "forbidden": ["保证录用"],
+        "min_length": 20
+      }
+    }
+  ]
+}

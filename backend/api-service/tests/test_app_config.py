@@ -23,7 +23,8 @@ class TestAppConfigLoad:
         """加载仓库自带 config.yaml，字段与默认值节一致"""
         cfg = load_app_config()
         assert cfg.models.default_provider in {"local", "deepseek", "openai"}
-        assert cfg.models.local.name
+        assert cfg.models.local.engine == "gguf"
+        assert cfg.models.local.gguf_path
         assert cfg.models.deepseek.base_url == "https://api.deepseek.com"
         assert cfg.models.deepseek.model
         assert cfg.mas.max_total_rounds >= 1

@@ -33,6 +33,21 @@ class BaseProvider(ABC):
         pass
     
     @abstractmethod
+    def generate_stream(
+        self,
+        prompt: str,
+        images: Optional[List[str]] = None,
+        **kwargs
+    ) -> Generator[Dict[str, Any], None, None]:
+        """
+        流式生成文本
+
+        Yields:
+            包含 type（token/thought/error）和 content 的字典
+        """
+        pass
+
+    @abstractmethod
     def generate_with_thoughts(
         self, 
         prompt: str, 

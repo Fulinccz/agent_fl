@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 from logger import get_logger
 from services.tracing import start_span, update_current_generation
 from agents.llm import get_shared_llm
+from agents.skills.resume_agents.condense_agent import should_condense
 from .state import (
     TaskPlan,
     TaskStep,
@@ -60,10 +61,10 @@ class MasterAgent:
             plan = self._llm_plan(user_input, intent, context)
             if plan is not None:
                 return plan
-            return self._template_plan(intent.name, user_input)
+            return self._template_plan(intent.name, user_input, context)
 
         # 简单意图，以及简历优化等自带确定性模板的复杂意图：零 LLM 开销
-        return self._template_plan(intent.name, user_input)
+        return self._template_plan(intent.name, user_input, context)
 
     def replan(
         self,
@@ -103,19 +104,30 @@ class MasterAgent:
 
     # ---------- 模板计划 ----------
 
-    def _template_plan(self, intent_name: str, user_input: str) -> TaskPlan:
+    def _template_plan(self, intent_name: str, user_input: str,
+                       context: Optional[Dict[str, Any]] = None) -> TaskPlan:
         """按意图使用确定性模板计划"""
         goal = (user_input or intent_name).strip()[:120] or intent_name
 
         if intent_name == INTENT_RESUME_OPTIMIZE:
+            # 条件步骤：超长简历（>2800 字）且用户未明确拒绝时，润色前先精简
+            resume = str((context or {}).get("resume") or user_input or "")
+            condense = should_condense(resume)
             steps = [
                 TaskStep(step_id="step_1", agent="resume_score",
                          task="对简历进行多维度评分", depends_on=[]),
                 TaskStep(step_id="step_2", agent="jd_match",
                          task="分析简历与 JD 的匹配度并生成优化建议", depends_on=[]),
-                TaskStep(step_id="step_3", agent="resume_polish",
-                         task="基于评分与建议润色简历", depends_on=["step_1", "step_2"]),
             ]
+            if condense:
+                logger.info(f"[MasterAgent] 简历超长（{len(resume)} 字），插入精简步骤")
+                steps.append(TaskStep(step_id="step_3", agent="resume_condense",
+                                      task="精简过长简历，压缩至约60%篇幅", depends_on=[]))
+            steps.append(TaskStep(
+                step_id=f"step_{len(steps) + 1}", agent="resume_polish",
+                task="基于评分与建议润色简历",
+                depends_on=[s.step_id for s in steps],
+            ))
         elif intent_name == INTENT_RESUME_SCORE:
             steps = [TaskStep(step_id="step_1", agent="resume_score",
                               task="对简历进行多维度评分", depends_on=[])]
@@ -244,5 +256,8 @@ class MasterAgent:
     def _is_valid_agent(self, agent: str) -> bool:
         if not self.executor_catalog:
             # 无目录时仅放行内置执行器
-            return agent in {"resume_score", "jd_match", "resume_polish", "resume_parse", "chat"}
+            return agent in {
+                "resume_score", "jd_match", "resume_condense",
+                "resume_polish", "resume_parse", "chat",
+            }
         return f"- {agent}:" in self.executor_catalog

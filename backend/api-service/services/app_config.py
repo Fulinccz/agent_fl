@@ -40,11 +40,12 @@ load_dotenv(dotenv_path=ENV_FILE, override=False)
 
 
 class LocalModelConfig(BaseModel):
-    """本地模型配置"""
-    name: str = "Qwen3___5-4B"
-    max_new_tokens: int = 128
+    """本地模型配置（GGUF + llama.cpp Q4 量化，内存约 2.6GB）"""
+    # 推理引擎：仅支持 gguf（transformers fp32 路径已移除）
+    engine: str = "gguf"
+    # GGUF 文件路径（ai/models 相对路径）
+    gguf_path: str = "gguf/Qwen3.5-4B-Q4_K_M.gguf"
     temperature: float = 0.35
-    chat_max_new_tokens: int = 512
 
 
 class DeepSeekConfig(BaseModel):
@@ -57,20 +58,11 @@ class DeepSeekConfig(BaseModel):
     max_retries: int = 2
 
 
-class OpenAIModelConfig(BaseModel):
-    """OpenAI 兼容在线模型配置"""
-    model: str = "gpt-4o-mini"
-    base_url: str = "https://api.openai.com/v1"
-    timeout: float = 120.0
-    max_retries: int = 2
-
-
 class ModelsConfig(BaseModel):
     """模型与 Provider 配置"""
     default_provider: str = "local"
     local: LocalModelConfig = Field(default_factory=LocalModelConfig)
     deepseek: DeepSeekConfig = Field(default_factory=DeepSeekConfig)
-    openai: OpenAIModelConfig = Field(default_factory=OpenAIModelConfig)
 
 
 class ReflectionConfig(BaseModel):

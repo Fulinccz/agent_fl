@@ -15,72 +15,78 @@ class UploadApiClient {
     this.baseURL = baseURL;
   }
 
+  /**
+   * 上传文件并进入 MAS 流水线
+   *
+   * 事件契约与 /resume/optimize/stream 完全一致（score / suggestions / condensed /
+   * polished / step 过程事件 / complete / error），由调用方统一消费。
+   */
   async uploadFile(
     request: UploadRequest,
     signal?: AbortSignal,
-    onToken?: (token: string) => void
-  ): Promise<{ response: string }> {
+    onEvent?: (event: ResumeOptimizeEvent) => void
+  ): Promise<void> {
     const formData = new FormData();
     formData.append('file', request.file);
-    formData.append('query', request.query);
+    if (request.query) formData.append('query', request.query);
+    if (request.jd) formData.append('jd', request.jd);
     if (request.provider) formData.append('provider', request.provider);
-    if ((request as any).model) formData.append('model', (request as any).model);
+    if (request.model) formData.append('model', request.model);
 
-    // 后端 /agent/upload_stream 返回 JSON-lines 流（每行一个事件对象）
-    const response = await fetch(`${this.baseURL}/agent/upload_stream`, {
-      method: 'POST',
-      body: formData,
-      signal
-    });
+    try {
+      // 后端 /agent/upload_stream 返回 JSON-lines 流（每行一个事件对象）
+      const response = await fetch(`${this.baseURL}/agent/upload_stream`, {
+        method: 'POST',
+        body: formData,
+        signal
+      });
 
-    if (!response.ok) {
-      let errorMessage = `Upload failed with status: ${response.status}`;
-      try {
-        const errorData = await response.json();
-        if (errorData.detail) {
-          errorMessage = errorData.detail;
-        }
-      } catch (e) {
-        // 如果解析JSON失败，使用默认错误信息
-      }
-      throw new Error(errorMessage);
-    }
-
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error('响应不支持流式读取');
-
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let fullText = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || ''; // 保留未完成的残行
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
+      if (!response.ok) {
+        let errorMessage = `Upload failed with status: ${response.status}`;
         try {
-          const event = JSON.parse(trimmed);
-          if (event.type === 'token' && event.content) {
-            fullText += event.content;
-            if (onToken) onToken(event.content);
-          } else if (event.type === 'error') {
-            throw new Error(event.message || event.content || '服务器处理出错');
+          const errorData = await response.json();
+          // 后端上传接口错误体为 {error}，统一异常处理器为 {message}/{detail}
+          errorMessage = errorData.error || errorData.message || errorData.detail || errorMessage;
+        } catch {
+          // 解析 JSON 失败时使用默认错误信息
+        }
+        throw new Error(errorMessage);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('响应不支持流式读取');
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // 保留未完成的残行
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            const event = JSON.parse(trimmed) as ResumeOptimizeEvent;
+            if (event.type === 'error') {
+              throw new Error(event.message || '服务器处理出错');
+            }
+            onEvent?.(event);
+          } catch (e) {
+            if (e instanceof SyntaxError) continue; // 非法 JSON 行跳过
+            throw e;
           }
-          // complete 等其他事件：文本已由 token 累积
-        } catch (e) {
-          if (e instanceof SyntaxError) continue; // 非法 JSON 行跳过
-          throw e;
         }
       }
+    } catch (error) {
+      // 用户主动中止：静默结束，与优化流保持一致
+      if (error instanceof Error && error.name === 'AbortError') return;
+      throw error;
     }
-
-    return { response: fullText };
   }
 }
 
@@ -109,11 +115,8 @@ export class ResumeOptimizeApiClient {
     onEvent?: (event: ResumeOptimizeEvent) => void,
     onComplete?: () => void
   ): Promise<void> {
-    console.log('=== ResumeOptimizeApiClient.optimizeStream 开始 ===');
-    
     const url = `${this.baseURL}/resume/optimize/stream`;
-    console.log('📤 发送请求到:', url);
-    
+
     try {
       const response = await fetch(url, {
         method: 'POST',
@@ -123,7 +126,14 @@ export class ResumeOptimizeApiClient {
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        let errorMessage = `HTTP error! status: ${response.status}`;
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorData.message || errorData.detail || errorMessage;
+        } catch {
+          // 解析失败用默认信息
+        }
+        throw new Error(errorMessage);
       }
 
       const reader = response.body?.getReader();
@@ -146,13 +156,10 @@ export class ResumeOptimizeApiClient {
           if (line.trim()) {
             try {
               const data = JSON.parse(line) as ResumeOptimizeEvent;
-              
-              console.log(`📥 收到事件: type=${data.type}`);
-              
               if (onEvent) {
                 onEvent(data);
               }
-            } catch (e) {
+            } catch {
               console.warn('解析事件失败:', line);
             }
           }
@@ -162,15 +169,54 @@ export class ResumeOptimizeApiClient {
       if (onComplete) {
         onComplete();
       }
-      
-      console.log('✅ 流式优化完成');
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
-        console.log('⚠️ 请求被中止');
         return;
       }
       throw error;
     }
+  }
+
+  /**
+   * 导出优化简历 docx
+   *
+   * 双路径：携带 file（用户上传的原始 docx）→ 服务端按内容对齐改写；
+   * 不携带 → 按内置模板重新排版生成。返回 blob 与后端建议文件名。
+   */
+  async exportDocx(text: string, file?: File | null): Promise<{ blob: Blob; filename: string }> {
+    const formData = new FormData();
+    formData.append('text', text);
+    if (file) formData.append('file', file);
+
+    // 导出可能涉及 docx 解析与重排，加 60s 超时避免弱网下永久 pending
+    const response = await fetch(`${this.baseURL}/resume/export-docx`, {
+      method: 'POST',
+      body: formData,
+      signal: AbortSignal.timeout(60_000)
+    });
+
+    if (!response.ok) {
+      let errorMessage = `导出失败（${response.status}）`;
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.error || errorData.message || errorData.detail || errorMessage;
+      } catch {
+        // 解析失败用默认信息
+      }
+      throw new Error(errorMessage);
+    }
+
+    const blob = await response.blob();
+    const disposition = response.headers.get('Content-Disposition') || '';
+    let filename = '简历_优化版.docx';
+    const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+    const plainMatch = disposition.match(/filename="?([^";]+)"?/i);
+    if (utf8Match) {
+      filename = decodeURIComponent(utf8Match[1]);
+    } else if (plainMatch) {
+      filename = plainMatch[1];
+    }
+    return { blob, filename };
   }
 }
 

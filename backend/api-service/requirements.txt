@@ -1,42 +1,95 @@
-# Web Framework
+# ============================================================
+# FulinAI Backend Dependencies
+# 安装：pip install -r requirements.txt
+# ============================================================
+
+# --- Web Framework ---
 fastapi
 uvicorn[standard]
 python-multipart
 python-jose[cryptography]
-# Pydantic
+
+# --- Pydantic ---
 pydantic
 pydantic-settings
-# LLM
-transformers
+
+# --- LLM（本地推理：GGUF + llama.cpp）---
+llama-cpp-pydist
 torch
-# Embedding & Vector Search
+
+# --- Embedding & Vector Search ---
 sentence-transformers
 faiss-cpu
-# API Clients
+
+# --- API Clients ---
 openai
 requests
-# Document Processing
+
+# --- Document Processing ---
 PyPDF2
 python-docx
 mammoth
-# Utilities
+
+# --- Utilities ---
 python-dotenv
 PyYAML
 numpy
-langfuse>=4,<5
 aiosqlite
 redis
 pymysql
-# Database ORM
+
+# --- Database ORM ---
 sqlalchemy
-# Monitoring
+
+# --- Monitoring ---
 prometheus-client
-# Message Queue
+langfuse>=4,<5
+
+# --- Message Queue ---
 kafka-python
-# LangGraph & LangChain
+
+# --- LangGraph & LangChain ---
 langgraph
 langchain
 langchain-community
 langchain-core
-# Graph Database
+
+# --- Graph Database ---
 neo4j
+
+# --- 测试 & 开发工具 ---
+pytest
+pytest-asyncio
+pytest-cov
+httpx
+respx
+statsd
+
+# --- QLoRA 微调（可选）---
+accelerate
+bitsandbytes
+peft
+datasets
+tensorboard
+wandb
+rouge-score
+bert-score
+
+# ============================================================
+# 可选依赖：多模态解析（图片 OCR / 语音转写）
+# 核心服务不依赖这些包，仅在上传图片/音频时按需安装。
+#
+# 安装：取消注释后 pip install -r requirements.txt
+#
+# 模型存放位置（仓库根 ai/models/）：
+#   - OCR：rapidocr-onnxruntime 默认内置 ONNX 模型即可用；
+#          如需离线固定版本，将 det.onnx / rec.onnx / cls.onnx 放到 ai/models/rapidocr/
+#   - 语音：faster-whisper small 模型放在 ai/models/whisper/faster-whisper-small/
+#          可用环境变量覆盖：MULTIMODAL_STT_MODEL_PATH / MULTIMODAL_OCR_MODEL_DIR
+# ============================================================
+
+# 图片 OCR（ONNX Runtime，CPU，无需 PaddlePaddle）
+# rapidocr-onnxruntime>=1.4,<2.0
+
+# 语音转写（CTranslate2 加速，CPU 可离线运行）
+# faster-whisper>=1.1,<2.0

@@ -1,17 +1,10 @@
-"""Master 编排器：主从多智能体主流程
-
-完整流水线：
-    用户输入 → 意图识别 → Master 规划 → 步骤调度执行（Slave）
-             → ReAct 反思（继续/重试/重规划/终止）→ 结果聚合 → 事件流输出
-
-事件协议（每行一个 JSON，与现有 SSE 契约兼容）：
-    intent / plan / step_start / step_result / reflection   —— 新增诊断事件（前端自动忽略）
-    score / suggestions / polished / complete / error        —— 简历优化旧契约（保持不变）
-    token / complete / error                                 —— 对话旧契约（保持不变）
+"""
+Master 编排器：主从多智能体主流程
 """
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Generator, List, Optional
 
 from logger import get_logger
@@ -193,82 +186,133 @@ class MasterOrchestrator:
                 if not ready:
                     break
 
-                for step in ready:
-                    step.status = STEP_RUNNING
-                    yield {"type": "step_start", "data": {
-                        "step_id": step.step_id, "agent": step.agent, "task": step.task,
-                    }}
+                # 分区：非流式步骤可并行，流式步骤串行
+                non_streamable = [s for s in ready if not self._is_streamable(s.agent)]
+                streamable = [s for s in ready if self._is_streamable(s.agent)]
 
-                    step_gen = self._execute_step_iter(step, blackboard)
+                if len(non_streamable) > 1:
+                    # ---- 并行批量执行非流式步骤（如评分+匹配）----
+                    for step in non_streamable:
+                        step.status = STEP_RUNNING
+                        yield {"type": "step_start", "data": {
+                            "step_id": step.step_id, "agent": step.agent, "task": step.task,
+                        }}
+
+                    pool = ThreadPoolExecutor(max_workers=len(non_streamable))
+                    futures = {}
+                    batch_aborted = False
+                    abort_message = ""
                     try:
-                        while True:
-                            event = next(step_gen)
-                            # 流式事件随生成实时透传（对话 token / 润色 polished）
-                            yield event
-                    except StopIteration as stop:
-                        result = stop.value
-                    blackboard.record(result)
+                        for step in non_streamable:
+                            ti = blackboard.snapshot()
+                            ti.update(step.params)
+                            ti["step_id"] = step.step_id
+                            executor = self.executors.get(step.agent)
+                            if executor is None:
+                                futures[step.step_id] = pool.submit(
+                                    lambda s=step: StepResult(
+                                        step_id=s.step_id, agent=s.agent,
+                                        success=False, error=f"执行器 {s.agent} 不存在",
+                                    )
+                                )
+                            else:
+                                futures[step.step_id] = pool.submit(executor.run, ti)
 
-                    step.result = result
-                    step.status = STEP_SUCCESS if result.success else STEP_FAILED
-                    yield {"type": "step_result", "data": result.to_dict()}
+                        for step in non_streamable:
+                            try:
+                                result = futures[step.step_id].result()
+                            except Exception as e:
+                                result = StepResult(
+                                    step_id=step.step_id, agent=step.agent,
+                                    success=False, error=str(e),
+                                )
 
-                    # 旧契约兼容：简历流程阶段事件
-                    yield from self._legacy_events(step, result, plan)
+                            verdict, reflection = yield from self._post_execute(
+                                step, result, plan, blackboard
+                            )
+                            aborted, finished, replans, replan_ev = self._handle_verdict(
+                                verdict, reflection, step, result, plan, blackboard, replans
+                            )
+                            if replan_ev:
+                                yield replan_ev
+                            if aborted:
+                                batch_aborted = True
+                                abort_message = reflection.thought or "流程被反思器终止"
+                                break
+                            if finished:
+                                finished_early = True
+                                break
 
-                    # ---------- ReAct 反思 ----------
-                    with start_span(
-                        "reflect",
-                        input={"step": step.step_id, "agent": step.agent,
-                               "success": result.success},
-                    ):
-                        reflection = self.reflector.review(
-                            step, result, plan.goal, blackboard.trace_lines()
-                        )
-                    update_current_span(output=reflection.to_dict())
-                    yield {"type": "reflection", "data": reflection.to_dict()}
+                        # 流式步骤串行（仅在批次正常结束时执行）
+                        if not batch_aborted and not finished_early:
+                            for step in streamable:
+                                step.status = STEP_RUNNING
+                                yield {"type": "step_start", "data": {
+                                    "step_id": step.step_id, "agent": step.agent, "task": step.task,
+                                }}
+                                step_gen = self._execute_step_iter(step, blackboard)
+                                try:
+                                    while True:
+                                        yield next(step_gen)
+                                except StopIteration as stop:
+                                    result = stop.value
 
-                    verdict = reflection.verdict
-                    if verdict == VERDICT_CONTINUE:
-                        continue
+                                verdict, reflection = yield from self._post_execute(
+                                    step, result, plan, blackboard
+                                )
+                                aborted, finished, replans, replan_ev = self._handle_verdict(
+                                    verdict, reflection, step, result, plan, blackboard, replans
+                                )
+                                if replan_ev:
+                                    yield replan_ev
+                                if aborted:
+                                    batch_aborted = True
+                                    abort_message = reflection.thought or "流程被反思器终止"
+                                    break
+                                if finished:
+                                    finished_early = True
+                                    break
+                    finally:
+                        # 取消排队中的任务；在途 LLM 调用放后台自行收尾，
+                        # 不阻塞 abort 响应（wait=False，线程完成后自动释放）
+                        for fut in futures.values():
+                            fut.cancel()
+                        pool.shutdown(wait=False)
 
-                    elif verdict == VERDICT_FINISH:
-                        self._skip_remaining(plan, reason="反思判定目标已达成")
-                        finished_early = True
+                    if batch_aborted:
+                        yield {"type": "error", "message": abort_message}
+                        return
+                    if finished_early:
                         break
 
-                    elif verdict == VERDICT_RETRY:
-                        step.retries += 1
-                        step.status = STEP_PENDING
-                        step.params["_feedback"] = reflection.feedback
-                        logger.info(
-                            f"[MasterOrchestrator] 步骤 {step.step_id} 重试 "
-                            f"({step.retries}): {reflection.feedback[:80]}"
-                        )
+                else:
+                    # ---- 原串行逻辑 ----
+                    for step in ready:
+                        step.status = STEP_RUNNING
+                        yield {"type": "step_start", "data": {
+                            "step_id": step.step_id, "agent": step.agent, "task": step.task,
+                        }}
+                        step_gen = self._execute_step_iter(step, blackboard)
+                        try:
+                            while True:
+                                yield next(step_gen)
+                        except StopIteration as stop:
+                            result = stop.value
 
-                    elif verdict == VERDICT_REPLAN:
-                        if replans >= self._max_replans:
-                            step.status = STEP_SKIPPED
-                            logger.warning("[MasterOrchestrator] 重规划次数用尽，跳过失败步骤")
-                            continue
-                        replans += 1
-                        new_plan = self.master_agent.replan(
-                            goal=plan.goal,
-                            trace=blackboard.trace_lines(),
-                            failed_step_id=step.step_id,
-                            error=result.error or result.summary,
-                            feedback=reflection.feedback,
+                        verdict, reflection = yield from self._post_execute(
+                            step, result, plan, blackboard
                         )
-                        new_steps = new_plan.steps if new_plan is not None else None
-                        if new_steps and self._apply_replan(plan, new_steps, failed=step):
-                            yield {"type": "plan", "data": plan.to_dict()}
-                        else:
-                            # 重规划失败 → 跳过失败步骤继续
-                            step.status = STEP_SKIPPED
-
-                    elif verdict == VERDICT_ABORT:
-                        yield {"type": "error", "message": reflection.thought or "流程被反思器终止"}
-                        return
+                        aborted, finished, replans, replan_ev = self._handle_verdict(
+                            verdict, reflection, step, result, plan, blackboard, replans
+                        )
+                        if replan_ev:
+                            yield replan_ev
+                        if aborted:
+                            yield {"type": "error", "message": reflection.thought or "流程被反思器终止"}
+                            return
+                        if finished:
+                            finished_early = True
+                            break
 
                 if finished_early:
                     break
@@ -297,6 +341,93 @@ class MasterOrchestrator:
             if all(d in done or d in skipped for d in step.depends_on):
                 ready.append(step)
         return ready
+
+    def _is_streamable(self, agent_name: str) -> bool:
+        """判断执行器是否支持流式输出"""
+        executor = self.executors.get(agent_name)
+        return executor is not None and getattr(executor, "streamable", False)
+
+    def _post_execute(
+        self,
+        step: TaskStep,
+        result: StepResult,
+        plan: TaskPlan,
+        blackboard: Blackboard,
+    ) -> Generator[Dict[str, Any], None, tuple]:
+        """步骤执行后的通用处理：记录结果、输出 step_result / legacy / reflection 事件。
+
+        返回 (verdict, reflection) 供调用方做循环控制。
+        """
+        blackboard.record(result)
+        step.result = result
+        step.status = STEP_SUCCESS if result.success else STEP_FAILED
+        yield {"type": "step_result", "data": result.to_dict()}
+        yield from self._legacy_events(step, result, plan)
+
+        with start_span(
+            "reflect",
+            input={"step": step.step_id, "agent": step.agent,
+                   "success": result.success},
+        ):
+            reflection = self.reflector.review(
+                step, result, plan.goal, blackboard.trace_lines()
+            )
+        update_current_span(output=reflection.to_dict())
+        yield {"type": "reflection", "data": reflection.to_dict()}
+        return reflection.verdict, reflection
+
+    def _handle_verdict(
+        self,
+        verdict: str,
+        reflection: Reflection,
+        step: TaskStep,
+        result: StepResult,
+        plan: TaskPlan,
+        blackboard: Blackboard,
+        replans: int,
+    ) -> tuple:
+        """处理反思裁决，返回 (aborted, finished, updated_replans, replan_event)。"""
+        if verdict == VERDICT_CONTINUE:
+            return False, False, replans, None
+
+        if verdict == VERDICT_FINISH:
+            self._skip_remaining(plan, reason="反思判定目标已达成")
+            return False, True, replans, None
+
+        if verdict == VERDICT_ABORT:
+            return True, False, replans, None
+
+        if verdict == VERDICT_RETRY:
+            step.retries += 1
+            step.status = STEP_PENDING
+            step.params["_feedback"] = reflection.feedback
+            logger.info(
+                f"[MasterOrchestrator] 步骤 {step.step_id} 重试 "
+                f"({step.retries}): {reflection.feedback[:80]}"
+            )
+            return False, False, replans, None
+
+        if verdict == VERDICT_REPLAN:
+            if replans >= self._max_replans:
+                step.status = STEP_SKIPPED
+                logger.warning("[MasterOrchestrator] 重规划次数用尽，跳过失败步骤")
+                return False, False, replans, None
+            replans += 1
+            new_plan = self.master_agent.replan(
+                goal=plan.goal,
+                trace=blackboard.trace_lines(),
+                failed_step_id=step.step_id,
+                error=result.error or result.summary,
+                feedback=reflection.feedback,
+            )
+            new_steps = new_plan.steps if new_plan is not None else None
+            if new_steps and self._apply_replan(plan, new_steps, failed=step):
+                return False, False, replans, {"type": "plan", "data": plan.to_dict()}
+            step.status = STEP_SKIPPED
+            return False, False, replans, None
+
+        # 未知 verdict：默认继续
+        return False, False, replans, None
 
     def _execute_step_iter(
         self, step: TaskStep, blackboard: Blackboard
@@ -417,11 +548,18 @@ class MasterOrchestrator:
             yield {"type": "score", "data": {
                 "overall_score": result.data.get("overall_score"),
                 "scores": result.data.get("score_result"),
+                "dimension_analysis": result.data.get("dimension_analysis") or {},
             }}
         elif step.agent == "jd_match":
             yield {"type": "suggestions", "data": {
                 "suggestions": result.data.get("suggestions"),
                 "match_analysis": result.data.get("match_result"),
+            }}
+        elif step.agent == "resume_condense":
+            yield {"type": "condensed", "data": {
+                "condensed_resume": result.data.get("condensed_resume"),
+                "original_length": result.data.get("original_length"),
+                "condensed_length": result.data.get("condensed_length"),
             }}
 
     def _apply_replan(
@@ -489,6 +627,7 @@ class MasterOrchestrator:
         artifact_map = {
             "overall_score": "overall_score",
             "scores": "score_result",
+            "dimension_analysis": "dimension_analysis",
             "suggestions": "suggestions",
             "match_analysis": "match_result",
             "optimized_resume": "optimized_resume",

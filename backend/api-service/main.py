@@ -32,7 +32,7 @@ ACTIVE_REQUESTS = Gauge(
 from api.routes import router
 from logger import get_logger, get_trace_id, set_trace_id, clear_trace_id
 from services.config import AppSettings
-from middleware.rate_limiter import rate_limiter
+from services.rate_limit import check_global_rate_limit
 from middleware.auth import AuthMiddleware
 
 logger = get_logger(__name__)
@@ -60,6 +60,13 @@ async def lifespan(app: FastAPI):
         logger.info("LLM model preloading started in background thread")
     except Exception as e:
         logger.error("Failed to start model preloading: %s", e)
+
+    # 后台预热多模态引擎（OCR/STT，可选依赖缺失时自动跳过）
+    try:
+        from rag.multimodal import preheat
+        preheat()
+    except Exception as e:
+        logger.error("Failed to start multimodal preheat: %s", e)
 
     # 注意：不要在此处注册 signal 处理器——会覆盖 uvicorn 的优雅退出
     # （uvicorn 的 handle_exit 负责 should_exit → 请求排空 → lifespan shutdown）
@@ -239,14 +246,24 @@ async def auth_middleware(request: Request, call_next):
 
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
-    """限流中间件 - 按 IP 限流"""
+    """限流中间件 - 全局按 IP 宽松兜底（滑动窗口，与端点级限流共用 services/rate_limit 实现）
+
+    敏感端点的严格配额由各路由层 check_rate_limit 负责。
+    限流器自身异常时 fail-open 并记录日志，避免限流组件故障导致全站 429。
+    """
     try:
-        await rate_limiter.check(request)
+        allowed, retry_after, _ = check_global_rate_limit(request)
+        if not allowed:
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "error": "Too Many Requests",
+                    "message": "请求过于频繁，请稍后再试。",
+                    "retry_after": retry_after,
+                },
+            )
     except Exception:
-        return JSONResponse(
-            status_code=429,
-            content={"error": "Too Many Requests", "retry_after": 1}
-        )
+        logger.error("Rate limiter error, fail-open", exc_info=True)
     return await call_next(request)
 
 
@@ -331,8 +348,34 @@ async def health_check():
     description="检查所有依赖服务（MySQL、Redis、Kafka）是否可用，用于 Kubernetes/Docker 就绪探针（Readiness Probe）",
 )
 async def readiness_check():
-    checks = {}
+    # 探针通常每 1-10s 打一次，缓存 5s 避免频繁新建 MySQL/Redis/Kafka 连接
+    now = time.monotonic()
+    cached = _readiness_cache.get("result")
+    if cached is not None and now - _readiness_cache["ts"] < _READINESS_TTL_SECONDS:
+        checks = cached
+    else:
+        checks = _perform_readiness_checks()
+        _readiness_cache["ts"] = now
+        _readiness_cache["result"] = checks
 
+    all_ok = all(v == "ok" for v in checks.values())
+
+    return JSONResponse(
+        status_code=200 if all_ok else 503,
+        content={
+            "status": "ready" if all_ok else "not_ready",
+            "checks": checks
+        }
+    )
+
+
+_READINESS_TTL_SECONDS = 5
+_readiness_cache: dict = {"ts": 0.0, "result": None}
+
+
+def _perform_readiness_checks() -> dict:
+    """实际执行 MySQL/Redis/Kafka 探活（被 readiness 端点短缓存包装）"""
+    checks = {}
     config = AppSettings.load()
 
     # 检查 MySQL
@@ -375,15 +418,7 @@ async def readiness_check():
     except Exception as e:
         checks["kafka"] = f"error: {str(e)}"
 
-    all_ok = all(v == "ok" for v in checks.values())
-
-    return JSONResponse(
-        status_code=200 if all_ok else 503,
-        content={
-            "status": "ready" if all_ok else "not_ready",
-            "checks": checks
-        }
-    )
+    return checks
 
 
 @app.get(
@@ -400,17 +435,6 @@ async def metrics():
 
 
 if __name__ == "__main__":
-    import torch
-
-    def set_torch_threads():
-        try:
-            torch.set_num_threads(torch.get_num_threads())
-            torch.set_num_interop_threads(torch.get_num_threads())
-        except Exception as e:
-            logger.warning("PyTorch 线程数设置失败：%s", e)
-
-    set_torch_threads()
-
     config = AppSettings.load()
     logger.info("Starting server on %s:%d", config.host, config.port)
 

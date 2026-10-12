@@ -1,77 +1,44 @@
 import { resumeOptimizeApiClient, uploadApiClient } from './api';
-import type { ResumeOptimizeRequest, UploadRequest, ResumeOptimizeEvent } from '../types';
+import type {
+  ResumeOptimizeRequest,
+  UploadRequest,
+  ResumeOptimizeEvent,
+} from '../types';
 
 /**
  * AgentService - 简历优化服务
- * 
- * 使用多 Agent 工作流进行简历优化：
- * 1. ResumeScoreAgent - 简历评分
- * 2. JDMatchAgent - JD 关键词匹配与优化建议
- * 3. ResumePolishAgent - 简历润色
+ *
+ * 粘贴简历与上传文件两条链路共用同一套 MAS 事件契约
+ * （score → jd_match → resume_condense? → resume_polish），
+ * 这里只提供两个薄入口，事件分发由调用方（useStreamResponse）统一处理。
  */
 class AgentService {
-  /**
-   * 流式简历优化
-   * 
-   * @param request 简历优化请求
-   * @param signal 用于取消请求的 AbortSignal
-   * @param onScore 评分结果回调
-   * @param onSuggestions 优化建议回调
-   * @param onPolished 润色结果回调
-   * @param onComplete 完成回调
-   * @param onError 错误回调
-   */
-  async optimizeResumeStream(
+  /** 粘贴简历：流式优化 */
+  async runOptimizeStream(
     request: ResumeOptimizeRequest,
-    signal?: AbortSignal,
-    onScore?: (data: { overall_score: any; scores: any }) => void,
-    onSuggestions?: (data: { suggestions: any; match_analysis: any }) => void,
-    onPolished?: (data: { optimized_resume: string }) => void,
-    onComplete?: (data: any) => void,
-    onError?: (error: string) => void
+    signal: AbortSignal | undefined,
+    onEvent: (event: ResumeOptimizeEvent) => void
   ): Promise<void> {
-    return resumeOptimizeApiClient.optimizeStream(
-      request,
-      signal,
-      (event: ResumeOptimizeEvent) => {
-        switch (event.type) {
-          case 'score':
-            if (onScore && event.data) onScore(event.data);
-            break;
-          case 'suggestions':
-            if (onSuggestions && event.data) onSuggestions(event.data);
-            break;
-          case 'polished':
-            if (onPolished && event.data) onPolished(event.data);
-            break;
-          case 'complete':
-            if (onComplete && event.data) onComplete(event.data);
-            break;
-          case 'error':
-            if (onError && event.message) onError(event.message);
-            break;
-        }
-      },
-      () => {
-        // onComplete 已经在上面处理了
-      }
-    );
+    return resumeOptimizeApiClient.optimizeStream(request, signal, onEvent);
+  }
+
+  /** 上传文件：解析后进入同一套 MAS 流水线 */
+  async runUploadStream(
+    request: UploadRequest,
+    signal: AbortSignal | undefined,
+    onEvent: (event: ResumeOptimizeEvent) => void
+  ): Promise<void> {
+    return uploadApiClient.uploadFile(request, signal, onEvent);
   }
 
   /**
-   * 上传文件并处理
-   * 
-   * @param request 上传请求
-   * @param signal 用于取消请求的 AbortSignal
-   * @returns 处理结果
+   * 导出优化简历 docx
+   *
+   * @param text 优化后的简历文本
+   * @param file 用户上传的原始 docx（可选，有则按对齐改写路径）
    */
-  async uploadAndProcess(
-    request: UploadRequest,
-    signal?: AbortSignal,
-    onToken?: (token: string) => void
-  ): Promise<string> {
-    const result = await uploadApiClient.uploadFile(request, signal, onToken);
-    return result.response;
+  async exportDocx(text: string, file?: File | null): Promise<{ blob: Blob; filename: string }> {
+    return resumeOptimizeApiClient.exportDocx(text, file);
   }
 }
 

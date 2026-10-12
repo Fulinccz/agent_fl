@@ -1,6 +1,6 @@
 from typing import Dict, Any, Optional, List
 from logger import get_logger
-from agents.registry import get_agent
+from agents.llm import get_shared_llm
 from services.tracing import start_span, update_current_generation
 
 logger = get_logger(__name__)
@@ -47,6 +47,7 @@ class LLMIntentClassifier:
         self.model = model
         self._llm = llm
         self._agent = None
+        self._agents: Dict[str, Any] = {}
 
     @property
     def agent(self):
@@ -54,8 +55,27 @@ class LLMIntentClassifier:
             if self._llm is not None:
                 self._agent = self._llm
             else:
-                self._agent = get_agent(provider=self.provider, model=self.model)
+                self._agent = get_shared_llm(provider=self.provider, model=self.model)
         return self._agent
+
+    def _agent_for(self, provider: Optional[str]) -> Any:
+        """按请求上下文的 provider 解析分类用 LLM
+
+        用户显式选择在线模型（如 deepseek）时，意图分类跟随该模型：分类 prompt
+        仅约 300 token，在线模型数秒完成，而本地 4B 模型需 60-90 秒，是整条请求
+        的最大延迟项。经 get_shared_llm 解析以复用成本开关（deepseek 未启用时自动
+        回落本地）与共享单例缓存。注入 LLM（测试/定制）时始终优先。
+        """
+        if self._llm is not None:
+            return self.agent  # 注入的 LLM 优先（测试/定制场景）；走 property 懒加载
+        normalized = (provider or "").strip().lower() or self.provider
+        if normalized not in self._agents:
+            try:
+                self._agents[normalized] = get_shared_llm(provider=normalized, model=self.model)
+            except Exception as e:
+                logger.warning(f"provider={normalized} 解析分类 LLM 失败，回退默认：{e}")
+                self._agents[normalized] = self.agent
+        return self._agents[normalized]
 
     def classify(
         self,
@@ -76,9 +96,13 @@ class LLMIntentClassifier:
         )
 
         try:
+            # 用户选择了在线模型时分类跟随该模型（context.provider），否则用默认
+            agent = self._agent_for((context or {}).get("provider"))
             logger.info(f"LLM intent classification for: {user_input[:50]}")
             with start_span("llm-intent-classify", as_type="generation", input=prompt[:500]):
-                result_text = self.agent.generate(prompt)
+                # max_new_tokens 必须显式给足：GGUF/transformers 默认 128，
+                # 长输入（简历全文）时 reason 字段变长，JSON 被截断无闭合括号 → 解析失败
+                result_text = agent.generate(prompt, max_new_tokens=256, deepThinking=False)
                 update_current_generation(output=result_text[:300])
 
             import json

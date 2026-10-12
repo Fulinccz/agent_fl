@@ -22,14 +22,13 @@ class SkillApiClient {
    * 
    * 返回路由决策信息，用于前端展示当前识别到的意图
    */
-  async routeIntent(userInput: string): Promise<SkillRouteResponse> {
-    const response = await fetch(
-      `${this.baseURL}/skill/route?user_input=${encodeURIComponent(userInput)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      }
-    );
+  async routeIntent(userInput: string, provider?: string): Promise<SkillRouteResponse> {
+    let url = `${this.baseURL}/skill/route?user_input=${encodeURIComponent(userInput)}`;
+    if (provider) url += `&provider=${encodeURIComponent(provider)}`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
 
     if (!response.ok) {
       const error = await response.json();

@@ -13,30 +13,22 @@
 
 # ----------------------- 模型与 Provider -----------------------
 models:
-  # 默认模型提供者：local（本地 Qwen）| deepseek | openai
+  # 默认模型提供者：local（本地 Qwen）| deepseek
   default_provider: local
   local:
-    # ai/models 下的模型目录名
-    name: Qwen3___5-4B
-    # 生成参数
-    max_new_tokens: 128
+    # 推理引擎：仅支持 gguf（llama.cpp Q4 量化，内存约 2.6GB）
+    engine: gguf
+    gguf_path: gguf/Qwen3.5-4B-Q4_K_M.gguf
     temperature: 0.35
-    # 对话执行器的生成长度上限
-    chat_max_new_tokens: 512
   deepseek:
     # 成本开关：false 时请求切换 deepseek 自动回落本地模型（不产生任何 API 费用）
     enabled: false
-    # DeepSeek OpenAPI（OpenAI 兼容协议）
+    # DeepSeek API（OpenAI 兼容协议）
     model: deepseek-flash
     base_url: https://api.deepseek.com
     # 请求超时（秒）
     timeout: 120
     # 网络失败重试次数
-    max_retries: 2
-  openai:
-    model: gpt-4o-mini
-    base_url: https://api.openai.com/v1
-    timeout: 120
     max_retries: 2
 
 # ----------------------- 多智能体编排（MAS）-----------------------

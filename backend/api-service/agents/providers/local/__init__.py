@@ -1,9 +1,6 @@
 """
 Local Provider 模块
 
-提供本地模型加载和推理功能
+本地推理统一走 GGUF（llama.cpp 子进程 + OpenAI 兼容 HTTP），
+由 agents/registry.py 直接 import GGUFProvider。
 """
-
-from .provider import LocalProvider
-
-__all__ = ['LocalProvider']

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { skillApiClient } from '../services/skillService';
 import type { SkillRouteInfo, SkillRouteState } from '../types/skill';
 
@@ -9,8 +9,8 @@ interface UseSkillRouterOptions {
 
 interface UseSkillRouterReturn {
   routeState: SkillRouteState;
-  routeIntent: (userInput: string) => Promise<SkillRouteInfo | null>;
-  executeAuto: (userInput: string) => Promise<{ route: SkillRouteInfo; result: any } | null>;
+  routeIntent: (userInput: string, provider?: string) => Promise<SkillRouteInfo | null>;
+  executeAuto: (userInput: string) => Promise<{ route: SkillRouteInfo; result: unknown } | null>;
   clearRoute: () => void;
 }
 
@@ -46,14 +46,17 @@ const initialState: SkillRouteState = {
  */
 export function useSkillRouter(options: UseSkillRouterOptions = {}): UseSkillRouterReturn {
   const [routeState, setRouteState] = useState<SkillRouteState>(initialState);
+  // options 用 ref 持有，避免内联对象导致回调每渲染重建
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
 
-  const routeIntent = useCallback(async (userInput: string): Promise<SkillRouteInfo | null> => {
+  const routeIntent = useCallback(async (userInput: string, provider?: string): Promise<SkillRouteInfo | null> => {
     if (!userInput.trim()) return null;
 
     setRouteState(prev => ({ ...prev, isRouting: true, error: null }));
 
     try {
-      const response = await skillApiClient.routeIntent(userInput);
+      const response = await skillApiClient.routeIntent(userInput, provider);
 
       if (response.error) {
         throw new Error(response.error);
@@ -76,8 +79,8 @@ export function useSkillRouter(options: UseSkillRouterOptions = {}): UseSkillRou
         error: null
       });
 
-      if (options.onRoute) {
-        options.onRoute(routeInfo);
+      if (optionsRef.current.onRoute) {
+        optionsRef.current.onRoute(routeInfo);
       }
 
       return routeInfo;
@@ -89,15 +92,15 @@ export function useSkillRouter(options: UseSkillRouterOptions = {}): UseSkillRou
         error: errorMessage
       }));
 
-      if (options.onError) {
-        options.onError(errorMessage);
+      if (optionsRef.current.onError) {
+        optionsRef.current.onError(errorMessage);
       }
 
       return null;
     }
-  }, [options]);
+  }, []);
 
-  const executeAuto = useCallback(async (userInput: string): Promise<{ route: SkillRouteInfo; result: any } | null> => {
+  const executeAuto = useCallback(async (userInput: string): Promise<{ route: SkillRouteInfo; result: unknown } | null> => {
     if (!userInput.trim()) return null;
 
     setRouteState(prev => ({ ...prev, isRouting: true, error: null }));
@@ -120,8 +123,8 @@ export function useSkillRouter(options: UseSkillRouterOptions = {}): UseSkillRou
         error: null
       });
 
-      if (options.onRoute) {
-        options.onRoute(routeInfo);
+      if (optionsRef.current.onRoute) {
+        optionsRef.current.onRoute(routeInfo);
       }
 
       return {
@@ -136,13 +139,13 @@ export function useSkillRouter(options: UseSkillRouterOptions = {}): UseSkillRou
         error: errorMessage
       }));
 
-      if (options.onError) {
-        options.onError(errorMessage);
+      if (optionsRef.current.onError) {
+        optionsRef.current.onError(errorMessage);
       }
 
       return null;
     }
-  }, [options]);
+  }, []);
 
   const clearRoute = useCallback(() => {
     setRouteState(initialState);

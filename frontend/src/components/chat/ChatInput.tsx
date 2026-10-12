@@ -1,131 +1,74 @@
-import React, { useRef } from 'react';
+import React from 'react';
 
 interface ChatInputProps {
-  value: string;
-  onChange: (value: string) => void;
   onSubmit: () => void;
   onStop: () => void;
   isLoading: boolean;
   uploadedFile: File | null;
   onFileChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
   onFileClear?: () => void;
-  onNewChat: () => void;
   disabled?: boolean;
-  deepThinking?: boolean;
-  onDeepThinkToggle?: () => void;
 }
 
 const ChatInput: React.FC<ChatInputProps> = ({
-  value,
-  onChange,
   onSubmit,
   onStop,
   isLoading,
   uploadedFile,
   onFileChange,
   onFileClear,
-  onNewChat,
-  disabled = false,
-  deepThinking = false,
-  onDeepThinkToggle
+  disabled = false
 }) => {
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      if (!disabled && !isLoading) {
-        onSubmit();
-      }
-    }
-  };
+  const blocked = disabled || isLoading;
 
   return (
-    <div className="input-container">
-      <div className="input-wrapper">
-        <textarea
-          ref={inputRef}
-          className="input"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="请发送消息~"
-          disabled={disabled || isLoading}
-          rows={5}
-        />
-      </div>
-      
-      <div className="form-actions">
-        <div className="left-actions">
-          <button 
-            className="new-chat-button"
-            onClick={onNewChat}
-            title="开启新对话"
+    <div className="input-actions">
+      <div className="actions-left">
+        <div className="attachment-container">
+          <label
+            className={`icon-button${blocked ? ' disabled' : ''}`}
+            title="支持文档 / 图片 / 音频（.pdf .doc .docx .txt .png .jpg .mp3 .wav 等）"
           >
-            开启新对话
-          </button>
-          
-          <button 
-            className={`deep-think-button${deepThinking ? ' active' : ''}`}
-            onClick={onDeepThinkToggle}
-            title={deepThinking ? '关闭深度思考' : '开启深度思考'}
-            style={{
-              borderColor: deepThinking ? '#6eb5ff' : 'var(--border-color)',
-              color: deepThinking ? '#6eb5ff' : 'var(--text-secondary)'
-            }}
-          >
-            深度思考
-          </button>
-          
-          <div className="attachment-container">
-            <label 
-              className={`attachment-button${isLoading ? ' disabled' : ''}`}
-              style={{ opacity: isLoading ? 0.5 : 1, cursor: isLoading ? 'not-allowed' : 'pointer' }}
-              title="仅支持 .docx 和 .pdf 格式"
-            >
-              <input
-                type="file"
-                onChange={onFileChange}
-                className="file-upload"
-                accept=".pdf,.docx"
-                disabled={isLoading}
-              />
-              📎
-            </label>
-            {uploadedFile && (
-              <div className="file-info">
-                <span className="file-name">{uploadedFile.name}</span>
-                <button
-                  className="remove-file"
-                  onClick={() => onFileClear?.()}
-                  title="移除文件"
-                >
-                  ✕
-                </button>
-              </div>
-            )}
-          </div>
+            <input
+              type="file"
+              onChange={onFileChange}
+              className="file-upload"
+              accept=".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg,.bmp,.webp,.mp3,.wav,.m4a,.flac,.ogg"
+              disabled={blocked}
+            />
+            📎
+          </label>
+          {uploadedFile && (
+            <div className="file-chip">
+              <span className="file-name">{uploadedFile.name}</span>
+              <button
+                type="button"
+                className="remove-file"
+                onClick={() => onFileClear?.()}
+                title="移除文件"
+              >
+                ✕
+              </button>
+            </div>
+          )}
         </div>
-
-        {isLoading ? (
-          <button 
-            className="send-button"
-            onClick={onStop}
-            title="停止生成"
-          >
-            ■
-          </button>
-        ) : (
-          <button 
-            className="send-button"
-            onClick={onSubmit}
-            disabled={disabled || !value.trim()}
-            title="发送消息"
-          >
-            ↑
-          </button>
-        )}
       </div>
+
+      {isLoading ? (
+        <button type="button" className="send-button stop" onClick={onStop} title="停止生成">
+          ■ 停止
+        </button>
+      ) : (
+        <button
+          type="submit"
+          className="send-button"
+          onClick={onSubmit}
+          disabled={disabled}
+          title="发送（Enter）"
+        >
+          开始优化 ↑
+        </button>
+      )}
     </div>
   );
 };

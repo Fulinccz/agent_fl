@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from agents.providers.deepseek import DeepSeekProvider
+from agents.providers.cloud.deepseek import DeepSeekProvider
 from agents.registry import get_agent
 from agents import llm as mas_llm
 from agents.mas.executors import _resolve_llm
@@ -170,10 +170,11 @@ class TestDeepSeekStream:
 # ==================== 停止与参数映射 ====================
 
 class TestDeepSeekControl:
-    def test_stop_generation(self, monkeypatch):
+    def test_stop_generation_with_no_active_streams_is_noop(self, monkeypatch):
         p = _make_provider(monkeypatch, stream_chunks=[_make_chunk(content="x")])
+        # 无活动流时停止不报错
         p.stop_generation()
-        assert p._stop_event.is_set()
+        assert p._active_streams == []
 
     def test_build_kwargs_mapping(self, monkeypatch):
         p = _make_provider(monkeypatch)

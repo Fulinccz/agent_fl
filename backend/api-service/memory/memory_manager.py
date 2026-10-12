@@ -1,7 +1,7 @@
 import uuid
-from typing import Dict, List, Optional, Any, Callable
+from typing import Dict, List, Optional, Any
 from datetime import datetime
-from .simple_memory import SimpleMemoryStore, ConversationMemory, get_simple_memory_store
+from .sqlite_memory import SQLiteMemoryStore, ConversationMemory, get_memory_store
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -10,7 +10,7 @@ logger = get_logger(__name__)
 class MemoryManager:
     def __init__(
         self,
-        memory_store: Optional[SimpleMemoryStore] = None,
+        memory_store: Optional[SQLiteMemoryStore] = None,
         max_context_length: int = 4000,  # 最大上下文长度（字符数）
         enable_summarization: bool = True  # 是否启用自动摘要
     ):
@@ -22,7 +22,7 @@ class MemoryManager:
             max_context_length: 最大上下文长度，超过则触发摘要
             enable_summarization: 是否启用自动摘要
         """
-        self.memory_store = memory_store or get_simple_memory_store()
+        self.memory_store = memory_store or get_memory_store()
         self.max_context_length = max_context_length
         self.enable_summarization = enable_summarization
         
@@ -186,7 +186,7 @@ _memory_manager: Optional[MemoryManager] = None
 
 
 def get_memory_manager(
-    memory_store: Optional[SimpleMemoryStore] = None,
+    memory_store: Optional[SQLiteMemoryStore] = None,
     max_context_length: int = 4000
 ) -> MemoryManager:
     """获取全局记忆管理器实例"""

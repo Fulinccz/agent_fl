@@ -93,9 +93,10 @@ async def execute_skill_auto(user_input: str):
         },
     }
 )
-async def route_intent(user_input: str):
+async def route_intent(user_input: str, provider: str | None = None):
     try:
-        route_result = agent_service.skill_executor.auto_select_skill(user_input)
+        context = {"provider": provider} if provider else None
+        route_result = agent_service.skill_executor.auto_select_skill(user_input, context)
         return route_result
     except Exception as e:
         logger.error(f"Intent route error: {e}")

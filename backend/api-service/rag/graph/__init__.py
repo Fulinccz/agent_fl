@@ -1,5 +1,9 @@
-from .neo4j.neo4j_client import Neo4jClient
-from .neo4j.graph_retriever import GraphRetriever
-from .neo4j.hybrid_retriever import HybridRetriever
+"""知识图谱检索（Neo4j）
+
+便捷入口：外部通常直接 `from rag.graph.xxx import ...`。
+"""
+from .neo4j_client import Neo4jClient
+from .graph_retriever import GraphRetriever
+from .hybrid_retriever import HybridRetriever
 
 __all__ = ["Neo4jClient", "GraphRetriever", "HybridRetriever"]

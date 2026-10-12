@@ -4,6 +4,7 @@
 全部使用 mock LLM，不加载真实模型。
 """
 import json
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -265,7 +266,7 @@ class TestExecutors:
     def test_registry_has_all_executors(self):
         registry = ExecutorRegistry(llm=make_mock_llm())
         assert set(registry.names()) == {
-            "resume_score", "jd_match", "resume_polish", "resume_parse", "chat"
+            "resume_score", "jd_match", "resume_condense", "resume_polish", "resume_parse", "chat"
         }
         assert "resume_score" in registry.catalog()
 
@@ -796,6 +797,10 @@ class _FakePolishAgent:
     def _clean_result(self, raw_text, original_resume):
         return "CLEANED:" + raw_text
 
+    @staticmethod
+    def _format_output(text):
+        return text
+
 
 class TestExecutorsExtra:
     def test_parse_missing_input(self):
@@ -1103,6 +1108,41 @@ class TestMasterOrchestratorExtra:
         types = [e["type"] for e in events]
         assert "error" in types and "complete" not in types
         assert events[-1]["message"] == "不可恢复"
+
+    def test_parallel_batch_abort_does_not_wait_inflight_step(self):
+        """score 与 jd_match 并行：score 反思 abort 后立即结束，
+        不等待仍在阻塞中的 jd_match（shutdown(wait=False)）"""
+        orch = self._orchestrator()
+
+        class _SlowMatch(BaseExecutor):
+            name = "jd_match"
+            streamable = False
+            required_inputs = ("resume",)
+
+            def run(self, task_input):
+                time.sleep(2.0)  # 模拟在途的慢 LLM 调用
+                return StepResult(
+                    step_id=task_input.get("step_id", "step_2"),
+                    agent="jd_match", success=True,
+                    data={"match_score": 90, "_stream_text": "x"},
+                )
+
+        orch.executors.register(_SlowMatch())
+        orch.reflector.review = lambda *a, **k: Reflection(
+            step_id="step_1", verdict=VERDICT_ABORT, thought="不可恢复", source="llm"
+        )
+
+        started = time.monotonic()
+        events = self._collect(
+            orch, "", {"resume": SAMPLE_RESUME, "jd": SAMPLE_JD},
+            preset_intent=RESUME_PRESET,
+        )
+        elapsed = time.monotonic() - started
+        types = [e["type"] for e in events]
+        assert "error" in types and "complete" not in types
+        assert events[-1]["message"] == "不可恢复"
+        # 在途 jd_match 需 2s 才返回；abort 后应在 1s 内退出，而非等待它
+        assert elapsed < 1.0
 
     def test_finish_verdict_skips_remaining_end_to_end(self):
         orch = self._orchestrator()

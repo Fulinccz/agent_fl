@@ -2,7 +2,7 @@
 
 覆盖 api/routes/chat.py 与 api/routes/resume.py 的 MAS 主流程接入：
 - MAS 成功：事件/回复透传，用户消息与助手消息各保存一次
-- MAS 失败：自动降级 ConversationGraph / 旧版 resume workflow（防重复保存）
+- MAS 失败：chat 降级 ConversationGraph 兜底 / resume 直接下发 error 事件
 - RAG 上下文构建的关闭/异常/成功路径
 - deps.get_master_orchestrator 全局单例
 
@@ -225,22 +225,11 @@ class TestResumeRoute:
         types = [e["type"] for e in events]
         assert types == ["intent", "score", "polished", "complete"]
 
-    async def test_resume_mas_failure_falls_back_to_legacy(
-        self, monkeypatch, fake_request
-    ):
-        # 编排器获取即失败
+    async def test_resume_mas_failure_emits_error(self, monkeypatch, fake_request):
+        """MAS 编排器异常 → 下发 error 事件"""
         monkeypatch.setattr(
             deps, "get_master_orchestrator",
             lambda: (_ for _ in ()).throw(RuntimeError("MAS 不可用")),
-        )
-
-        workflow = MagicMock()
-        workflow.optimize_stream.return_value = iter([
-            {"type": "score", "data": {"overall_score": {"score": 70}}},
-            {"type": "complete", "data": {}},
-        ])
-        monkeypatch.setattr(
-            "agents.skills.resume_agents.get_resume_workflow", lambda: workflow
         )
 
         response = await resume_route.resume_optimize_stream(
@@ -248,12 +237,11 @@ class TestResumeRoute:
         )
         events = await _drain_stream(response)
 
-        types = [e["type"] for e in events]
-        assert types == ["score", "complete"]
-        workflow.optimize_stream.assert_called_once()
+        assert events[-1]["type"] == "error"
+        assert "MAS 不可用" in events[-1]["message"]
 
-    async def test_resume_partial_results_no_fallback(self, monkeypatch, fake_request):
-        """MAS 迭代中途异常但已产出结果事件 → 不触发降级（避免重复执行）"""
+    async def test_resume_partial_results_emits_error(self, monkeypatch, fake_request):
+        """MAS 迭代中途异常但已产出部分结果 → 已产出事件透传 + 异常转为 error 事件"""
         orch = MagicMock()
 
         def _stream(user_input, context, preset_intent):
@@ -263,39 +251,14 @@ class TestResumeRoute:
         orch.run_stream = MagicMock(side_effect=_stream)
         monkeypatch.setattr(deps, "get_master_orchestrator", lambda: orch)
 
-        # 若错误地触发降级会调用此函数，令其显形
-        monkeypatch.setattr(
-            "agents.skills.resume_agents.get_resume_workflow",
-            lambda: (_ for _ in ()).throw(AssertionError("不应触发降级")),
-        )
-
         response = await resume_route.resume_optimize_stream(
             fake_request, ResumeOptimizeRequest(resume="简历")
         )
         events = await _drain_stream(response)
 
         types = [e["type"] for e in events]
-        assert types == ["score"]
-
-    async def test_resume_legacy_inner_error_emits_error(self, monkeypatch, fake_request):
-        """MAS 失败触发降级，但旧工作流也异常 → 下发 error 事件"""
-        monkeypatch.setattr(
-            deps, "get_master_orchestrator",
-            lambda: (_ for _ in ()).throw(RuntimeError("MAS 不可用")),
-        )
-        workflow = MagicMock()
-        workflow.optimize_stream.side_effect = RuntimeError("旧流程也挂了")
-        monkeypatch.setattr(
-            "agents.skills.resume_agents.get_resume_workflow", lambda: workflow
-        )
-
-        response = await resume_route.resume_optimize_stream(
-            fake_request, ResumeOptimizeRequest(resume="简历")
-        )
-        events = await _drain_stream(response)
-
-        assert events[-1]["type"] == "error"
-        assert "旧流程也挂了" in events[-1]["message"]
+        assert types == ["score", "error"]
+        assert "中途断了" in events[-1]["message"]
 
 
 # ============ RAG 上下文构建 ============

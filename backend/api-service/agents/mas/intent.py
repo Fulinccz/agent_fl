@@ -132,8 +132,8 @@ class IntentRecognizer:
                 is_complex=True,
             )
 
-        # 3. 三层路由识别单技能意图
-        skill, confidence, source, reason = self._route(user_input)
+        # 3. 三层路由识别单技能意图（透传 context，路由 L3 层按 context.provider 选择分类模型）
+        skill, confidence, source, reason = self._route(user_input, context)
 
         # 4. 后处理与复杂度修正
         intent = self._post_process(
@@ -159,7 +159,7 @@ class IntentRecognizer:
         lowered = user_input.lower()
         return any(marker in lowered for marker in _COMPLEX_MARKERS)
 
-    def _route(self, user_input: str) -> tuple:
+    def _route(self, user_input: str, context: Optional[Dict[str, Any]] = None) -> tuple:
         """调用三层路由，返回 (skill, confidence, source, reason)；失败时降级"""
         if not user_input or not user_input.strip():
             return INTENT_CHAT_GENERAL, 0.6, "rule", "空输入，默认通用对话"
@@ -169,7 +169,7 @@ class IntentRecognizer:
             return INTENT_CHAT_GENERAL, 0.4, "fallback", "路由器不可用，默认通用对话"
 
         try:
-            result = router.route(user_input)
+            result = router.route(user_input, context or {})
             return result.skill, float(result.confidence), result.source, result.reason
         except Exception as e:
             logger.warning(f"[IntentRecognizer] 三层路由异常，降级: {e}")
