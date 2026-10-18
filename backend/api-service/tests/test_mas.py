@@ -1,6 +1,7 @@
 """主从多智能体系统（agents/mas）测试套件
 
-覆盖：意图识别、Master 规划、执行器、ReAct 反思、编排器全流程与异常路径。
+覆盖：意图识别、Master 规划、执行器、反思评审链（RuleCritic/LLMCritic）、
+控制策略（重试预算/重规划）、ReAct 步内回路、编排器全流程与异常路径。
 全部使用 mock LLM，不加载真实模型。
 """
 import json
@@ -31,7 +32,8 @@ from agents.mas.state import (
 )
 from agents.mas.intent import IntentRecognizer, detect_multiple_intents
 from agents.mas.planner import MasterAgent
-from agents.mas.reflector import Reflector
+from agents.mas.reflector import Reflector, RuleCritic, LLMCritic
+from agents.mas.executors.base import ReActLoop
 from agents.mas.executors import (
     ExecutorRegistry,
     BaseExecutor,
@@ -271,7 +273,7 @@ class TestExecutors:
         assert "resume_score" in registry.catalog()
 
 
-# ============ ReAct 反思测试 ============
+# ============ 反思评审链测试 ============
 
 class TestReflector:
     def setup_method(self):
@@ -287,55 +289,47 @@ class TestReflector:
         assert reflection.verdict == VERDICT_CONTINUE
         assert reflection.source == "rule"
 
-    def test_failure_retries_then_replan(self):
+    def test_failure_reports_retry_without_budget(self):
+        """评审器只报告问题，不持有重试预算（预算由 Master 控制）"""
         result = StepResult(step_id="step_1", agent="resume_score",
                             success=False, error="执行出错")
-        # 第一次：重试
-        r1 = self.reflector.review(self._make_step(retries=0), result, "目标", [])
-        assert r1.verdict == VERDICT_RETRY
-        assert "重试" in r1.feedback or "失败原因" in r1.feedback
-        # 超过最大重试：重规划
-        r2 = self.reflector.review(self._make_step(retries=2), result, "目标", [])
-        assert r2.verdict == VERDICT_REPLAN
+        # 无论已重试多少次，评审结论都是 retry，由 Master 决定是否升级
+        for retries in (0, 5):
+            r = self.reflector.review(self._make_step(retries=retries), result, "目标", [])
+            assert r.verdict == VERDICT_RETRY
+            assert "失败原因" in r.feedback
 
     def test_missing_outputs_triggers_retry(self):
         result = StepResult(step_id="step_1", agent="resume_score", success=True, data={})
         reflection = self.reflector.review(self._make_step(), result, "目标", [])
         assert reflection.verdict == VERDICT_RETRY
 
-    def test_polish_too_short_triggers_retry(self):
+    def test_undecidable_returns_none_when_llm_disabled(self):
+        """边界情况 + LLM 关闭 → 评审链无法裁决，返回 None（Master 兜底）"""
         result = StepResult(step_id="step_1", agent="resume_polish", success=True,
                             data={"optimized_resume": "太短"})
-        reflection = self.reflector.review(
-            self._make_step(agent="resume_polish"), result, "目标", [])
-        assert reflection.verdict == VERDICT_RETRY
+        assert self.reflector.review(
+            self._make_step(agent="resume_polish"), result, "目标", []
+        ) is None
 
-    def test_llm_verdict_parsing(self):
-        reflector = Reflector(llm=make_mock_llm(), use_llm_reflection=True)
+    def test_rule_retry_short_circuits_llm(self):
+        """规则已裁决（如产出缺失）时不再消耗 LLM 审查"""
+        llm = MagicMock()
+        reflector = Reflector(llm=llm, use_llm_reflection=True)
+        result = StepResult(step_id="step_1", agent="chat", success=True, data={})
+        reflection = reflector.review(self._make_step(agent="chat"), result, "目标", [])
+        assert reflection.verdict == VERDICT_RETRY and reflection.source == "rule"
+        llm.generate.assert_not_called()
+
+    def test_llm_review_via_critic(self):
         llm_result = MagicMock()
         llm_result.generate.return_value = json.dumps({
-            "verdict": "retry", "thought": "产出不完整", "feedback": "请完整生成"
-        }, ensure_ascii=False)
-        reflector._llm = llm_result
-        result = StepResult(step_id="step_1", agent="chat", success=True, data={})
-        step = self._make_step(agent="chat", retries=5)  # 规则重试耗尽
-        reflection = reflector.review(step, result, "目标", [])
-        # chat 无必需产出校验字段缺失逻辑？chat 有 ["answer"] → 规则会 retry；
-        # retries 已达上限 → 规则裁决 replan，先于 LLM
-        assert reflection.verdict == VERDICT_REPLAN
-
-    def test_llm_review_used_when_rule_undecided(self):
-        reflector = Reflector(llm=make_mock_llm(), use_llm_reflection=True)
-        reflector._llm = MagicMock()
-        reflector._llm.generate.return_value = json.dumps({
             "verdict": "continue", "thought": "可接受", "feedback": ""
         }, ensure_ascii=False)
-        # resume_parse 无必需产出校验字段 → 规则判 continue，不会走到 LLM；
-        # 构造一个规则返回 None 的场景：改为直接单测 _llm_review
+        critic = LLMCritic(llm=llm_result)
         result = StepResult(step_id="step_1", agent="chat", success=True,
                             data={"answer": "部分回答"})
-        step = self._make_step(agent="chat")
-        reflection = reflector._llm_review(step, result, "目标", [])
+        reflection = critic.critique(self._make_step(agent="chat"), result, "目标", [])
         assert reflection is not None
         assert reflection.verdict == VERDICT_CONTINUE
         assert reflection.source == "llm"
@@ -963,7 +957,7 @@ class TestExecutorsExtra:
         assert registry.get("不存在") is None
 
 
-# ============ ReAct 反思补充测试 ============
+# ============ 反思评审链补充测试 ============
 
 class TestReflectorExtra:
     def _step(self, agent="resume_polish", retries=0):
@@ -972,19 +966,19 @@ class TestReflectorExtra:
     def test_llm_review_invalid_json_and_verdict(self):
         llm = MagicMock()
         llm.generate.return_value = "模型自由发挥，没有JSON"
-        r = Reflector(llm=llm)
+        critic = LLMCritic(llm=llm)
         result = StepResult(step_id="step_1", agent="chat", success=True, data={"answer": "x"})
-        assert r._llm_review(self._step(), result, "g", []) is None
+        assert critic.critique(self._step(), result, "g", []) is None
 
         llm.generate.return_value = json.dumps({"verdict": "explode"})
-        assert r._llm_review(self._step(), result, "g", []) is None
+        assert critic.critique(self._step(), result, "g", []) is None
 
     def test_llm_review_generate_exception(self):
         llm = MagicMock()
         llm.generate.side_effect = RuntimeError("模型超时")
-        r = Reflector(llm=llm)
+        critic = LLMCritic(llm=llm)
         result = StepResult(step_id="step_1", agent="chat", success=True, data={"answer": "x"})
-        assert r._llm_review(self._step(), result, "g", []) is None
+        assert critic.critique(self._step(), result, "g", []) is None
 
     def test_llm_review_uses_shared_provider(self, monkeypatch):
         shared = MagicMock()
@@ -992,9 +986,9 @@ class TestReflectorExtra:
             "verdict": "abort", "thought": "无法修复", "feedback": "",
         }, ensure_ascii=False)
         monkeypatch.setattr("agents.mas.reflector.get_shared_llm", lambda: shared)
-        r = Reflector(llm=None)  # 未注入 → 延迟取共享 LLM
+        critic = LLMCritic(llm=None)  # 未注入 → 延迟取共享 LLM
         result = StepResult(step_id="step_1", agent="chat", success=True, data={"answer": "x"})
-        reflection = r._llm_review(self._step(), result, "g", [])
+        reflection = critic.critique(self._step(), result, "g", [])
         assert reflection is not None and reflection.verdict == VERDICT_ABORT
 
     def test_short_polish_escalates_to_llm_and_accepts(self):
@@ -1021,14 +1015,12 @@ class TestReflectorExtra:
         reflection = r.review(self._step(), result, "g", [])
         assert reflection.verdict == VERDICT_ABORT
 
-    def test_short_polish_without_llm_falls_back_to_replan(self):
-        """LLM 审查关闭且重试次数耗尽 → 保守兜底 replan"""
+    def test_short_polish_without_llm_returns_none(self):
+        """LLM 审查关闭且规则遇边界情况 → 评审链无法裁决（None，Master 兜底）"""
         r = Reflector(llm=MagicMock(), use_llm_reflection=False)
         result = StepResult(step_id="step_1", agent="resume_polish", success=True,
                             data={"optimized_resume": "短"})
-        reflection = r.review(self._step(retries=2), result, "g", [])
-        assert reflection.verdict == VERDICT_REPLAN
-        assert reflection.source == "fallback"
+        assert r.review(self._step(retries=2), result, "g", []) is None
 
     def test_polish_length_boundary_30_chars(self):
         r = Reflector(llm=MagicMock(), use_llm_reflection=True)
@@ -1044,7 +1036,7 @@ class TestReflectorExtra:
         ("unknown_agent", {}, None),
     ])
     def test_check_outputs_matrix(self, agent, data, should_miss):
-        missing = Reflector._check_outputs(agent, data)
+        missing = RuleCritic._check_outputs(agent, data)
         if should_miss:
             assert should_miss in missing
         else:
@@ -1359,3 +1351,192 @@ class TestSkillRouterLLMInjection:
         router = SkillRouterAgent(llm=fake)
         assert router.llm_classifier._llm is fake
         assert router.llm_classifier.agent is fake
+
+
+# ============ 控制策略测试（重试预算归编排器） ============
+
+class TestMasterPolicy:
+    def _orchestrator(self, llm=None):
+        return MasterOrchestrator(
+            llm=llm or make_mock_llm(),
+            enable_vector_intent=False,
+            use_llm_reflection=False,
+        )
+
+    def test_retry_budget_escalates_to_replan(self):
+        """retry 裁决超出预算 → 升级重规划；重规划不可用 → 跳过步骤"""
+        orch = self._orchestrator()
+        orch.master_agent.replan = lambda **k: None
+        step = TaskStep(step_id="s1", agent="resume_parse", task="t")
+        plan = TaskPlan(goal="g", intent="x", steps=[step])
+        reflection = Reflection(step_id="s1", verdict=VERDICT_RETRY,
+                                feedback="再试", source="rule")
+        board = Blackboard(message="m")
+        replans = 0
+        for _ in range(5):
+            aborted, finished, replans, _ev = orch._handle_verdict(
+                VERDICT_RETRY, reflection, step,
+                StepResult(step_id="s1", agent="resume_parse", success=False, error="x"),
+                plan, board, replans,
+            )
+            if step.status == "skipped":
+                break
+        # 预算内重试一次（max_step_retries=1），预算耗尽升级重规划，重规划不可用 → 跳过
+        assert step.retries == 1
+        assert step.status == "skipped"
+
+    def test_retry_within_budget_requeues(self):
+        """预算内 retry → 步骤重置为 pending，反馈写入 params._feedback"""
+        orch = self._orchestrator()
+        step = TaskStep(step_id="s1", agent="resume_parse", task="t")
+        reflection = Reflection(step_id="s1", verdict=VERDICT_RETRY,
+                                feedback="请完整生成", source="rule")
+        aborted, finished, replans, ev = orch._handle_verdict(
+            VERDICT_RETRY, reflection, step,
+            StepResult(step_id="s1", agent="resume_parse"), TaskPlan(goal="g", intent="x"),
+            Blackboard(), 0,
+        )
+        assert not aborted and not finished and step.status == "pending"
+        assert step.retries == 1 and step.params["_feedback"] == "请完整生成"
+
+    def test_none_reflection_synthesizes_policy_retry(self):
+        """评审链返回 None → 编排器合成 policy retry 裁决并下发 reflection 事件"""
+        orch = self._orchestrator()
+        orch.reflector.review = lambda *a, **k: None
+        step = TaskStep(step_id="s1", agent="resume_parse", task="t")
+        plan = TaskPlan(goal="g", intent="x", steps=[step])
+        gen = orch._post_execute(
+            step,
+            StepResult(step_id="s1", agent="resume_parse", success=True, data={"x": 1}),
+            plan, Blackboard(message="m"),
+        )
+        events = []
+        while True:
+            try:
+                events.append(next(gen))
+            except StopIteration as stop:
+                verdict, reflection = stop.value
+                break
+        assert verdict == VERDICT_RETRY and reflection.source == "policy"
+        assert any(e["type"] == "reflection" for e in events)
+
+    def test_iter_streaming_passes_through_thought(self):
+        """执行器产出的 thought 事件由 master 实时透传，不影响聚合结果"""
+        orch = self._orchestrator()
+
+        class _ThoughtChat(BaseExecutor):
+            name = "chat"
+            streamable = True
+
+            def run_stream(self, task_input):
+                yield {"type": "thought", "content": "先查资料"}
+                yield {"type": "token", "content": "最终"}
+                yield {"type": "token", "content": "回答"}
+
+        events, result = self._drain_stream(
+            orch._iter_streaming(_ThoughtChat(), TaskStep(step_id="s", agent="chat", task="t"),
+                                 {"message": "hi"})
+        )
+        assert [e["type"] for e in events] == ["thought", "token", "token"]
+        assert events[0]["content"] == "先查资料"
+        assert result.success and result.data["answer"] == "最终回答"
+
+    def _drain_stream(self, gen) -> tuple:
+        events: list = []
+        while True:
+            try:
+                events.append(next(gen))
+            except StopIteration as stop:
+                return events, stop.value
+
+
+# ============ ReAct 步内回路测试 ============
+
+class TestReActLoop:
+    def _llm(self, raw):
+        m = MagicMock()
+        m.generate.return_value = raw
+        return m
+
+    def test_parse_decision_valid_with_noise(self):
+        thought, action, query = ReActLoop._parse_decision(
+            '噪声{"thought": "需要资料", "action": "search_knowledge", "query": "量化成果"}尾部'
+        )
+        assert (thought, action, query) == ("需要资料", "search_knowledge", "量化成果")
+
+    def test_parse_decision_invalid_falls_back_answer(self):
+        assert ReActLoop._parse_decision("没有JSON") == ("", "answer", "")
+        assert ReActLoop._parse_decision('{"broken": ') == ("", "answer", "")
+
+    def test_decide_unknown_action_falls_back_to_answer(self):
+        loop = ReActLoop(
+            self._llm('{"thought": "t", "action": "fly", "query": "q"}'),
+            tools={"search_knowledge": lambda q: "obs"},
+        )
+        thought, action, _query = loop.decide("hi", "")
+        assert thought == "t" and action == "answer"
+
+    def test_decide_llm_exception_returns_answer(self):
+        llm = MagicMock()
+        llm.generate.side_effect = RuntimeError("决策模型超时")
+        loop = ReActLoop(llm, tools={"search_knowledge": lambda q: "obs"})
+        assert loop.decide("hi", "") == ("", "answer", "")
+
+    def test_run_tool_exception_returns_empty(self):
+        def boom(q):
+            raise RuntimeError("工具挂了")
+        loop = ReActLoop(MagicMock(), tools={"search_knowledge": boom})
+        assert loop.run_tool("search_knowledge", "q") == ""
+
+
+class TestChatReact:
+    def _chat(self, decision_raw, tokens):
+        llm = MagicMock()
+        llm.generate.return_value = decision_raw
+        llm.generate_stream.return_value = iter(
+            [{"type": "token", "content": t} for t in tokens]
+        )
+        return ChatExecutor(llm=llm), llm
+
+    def test_react_disabled_by_default(self):
+        """未显式开启且配置默认关闭 → 不构建回路（保持快速路径）"""
+        chat, _ = self._chat("", [])
+        assert chat._build_react_loop({"message": "hi"}, MagicMock()) is None
+
+    def test_react_skipped_when_rag_context_present(self):
+        """已有预检索上下文 → 直接回答，不进入决策回路"""
+        chat, _ = self._chat("", [])
+        assert chat._build_react_loop(
+            {"message": "hi", "rag_context": "已有资料", "use_react": True}, MagicMock()
+        ) is None
+
+    def test_react_search_then_stream_answer(self, monkeypatch):
+        """决策 search_knowledge → 工具产出注入上下文 → thought 事件 + 流式回答"""
+        chat, llm = self._chat(
+            '{"thought": "需要知识库", "action": "search_knowledge", "query": "量化"}',
+            ["答", "案"],
+        )
+        monkeypatch.setattr(
+            ChatExecutor, "_tool_search_knowledge", staticmethod(lambda q: f"KB:{q}")
+        )
+        events = list(chat.run_stream({"message": "怎么量化", "use_react": True}))
+        thoughts = [e["content"] for e in events if e["type"] == "thought"]
+        tokens = "".join(e["content"] for e in events if e["type"] == "token")
+        assert thoughts == ["需要知识库"]
+        assert tokens == "答案"
+        # 检索观察注入最终回答提示词
+        stream_prompt = llm.generate_stream.call_args[0][0]
+        assert "KB:量化" in stream_prompt
+
+    def test_react_decide_answer_skips_tool(self, monkeypatch):
+        """决策直接回答 → 不调用工具，无 thought 阻塞，直接流式"""
+        chat, llm = self._chat('{"thought": "资料足够", "action": "answer"}', ["直答"])
+        tool_calls = []
+        monkeypatch.setattr(
+            ChatExecutor, "_tool_search_knowledge",
+            staticmethod(lambda q: tool_calls.append(q)),
+        )
+        events = list(chat.run_stream({"message": "你好", "use_react": True}))
+        assert tool_calls == []
+        assert [e["type"] for e in events] == ["thought", "token"]
+        assert events[0]["content"] == "资料足够"

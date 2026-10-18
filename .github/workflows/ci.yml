@@ -34,19 +34,23 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          pytest tests/ -v --cov=agents --cov=cache --cov=rag \
+          pytest tests/ -v \
+            --cov=agents --cov=cache --cov=rag --cov=api \
+            --cov=services --cov=middleware --cov=skillhub \
             --cov-report=term-missing --cov-report=xml:coverage.xml \
             --junitxml=test-results.xml \
-            --tb=short 2>&1 || true
+            --tb=short
+
+      - name: Check crawler/importer compiles
+        working-directory: raw_data
+        run: python -m compileall -q src
 
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: python-coverage
-          path: |
-            backend/api-service/coverage.xml
-            backend/api-service/test-results.png
+          path: backend/api-service/coverage.xml
 
       - name: Upload test results
         if: always()
@@ -76,7 +80,7 @@ jobs:
 
       - name: Run tests with race detector
         run: |
-          go test ./tests/... -v -race -coverprofile=coverage.out -covermode=atomic 2>&1
+          go test ./... -v -race -coverprofile=coverage.out -covermode=atomic
 
       - name: Upload coverage report
         if: always()
@@ -100,17 +104,23 @@ jobs:
       - name: Go vet
         run: cd backend/api-gateway && go vet ./...
 
-      - name: Check Dockerfiles hadolint
+      - name: Lint Dockerfile (Go gateway)
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: backend/api-gateway/dockerfile
-        continue-on-error: true
+          config: .hadolint.yaml
 
-      - name: Check Dockerfiles hadolint (Python)
+      - name: Lint Dockerfile (Python service)
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: backend/api-service/dockerfile
-        continue-on-error: true
+          config: .hadolint.yaml
+
+      - name: Lint Dockerfile (Frontend)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: frontend/dockerfile
+          config: .hadolint.yaml
 
   frontend-check:
     name: Frontend Lint & Build
@@ -133,10 +143,30 @@ jobs:
         run: npm ci
 
       - name: Lint
-        run: npx eslint . --ext .ts,.tsx || true
+        run: npm run lint
 
       - name: Type check
-        run: npx tsc --noEmit || true
+        run: npx tsc --noEmit
 
       - name: Build
         run: npm run build
+
+  java-build:
+    name: Java Pipeline Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: data/java-pipeline
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Compile
+        run: mvn -q compile

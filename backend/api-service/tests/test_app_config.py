@@ -6,7 +6,6 @@ import textwrap
 
 import pytest
 
-from services import app_config as app_config_module
 from services.app_config import AppConfig, load_app_config, reset_app_config
 
 

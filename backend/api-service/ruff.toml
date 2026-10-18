@@ -1,0 +1,14 @@
+# Ruff 配置：CI（astral-sh/ruff-action）与本地 `ruff check .` 共用
+#
+# 规则集说明：
+# - 只启用 Pyflakes（F）与 pycodestyle 的错误类（E4/E7/E9），覆盖
+#   未定义变量/名称（F821）、未用导入（F401）、未用局部变量（F841）、
+#   无效 f-string（F541）、缩进/语法错误（E9）等真实缺陷。
+# - UP（现代化注解）、I（import 排序）、BLE（宽泛 except）等风格规则
+#   存量代码尚未全面适配，暂不启用，避免风格噪声掩盖真实问题。
+#   后续做专项清理后可逐步放开。
+target-version = "py312"
+line-length = 120
+
+[lint]
+select = ["E4", "E7", "E9", "F"]

@@ -3,6 +3,7 @@ package config
 import (
 	"agent-api/pkg/logger"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/viper"
 )
@@ -32,12 +33,15 @@ func LoadConfig() (*Config, error) {
 
 	// 设置默认值（本地开发默认 localhost，Docker 环境可通过环境变量覆盖）
 	viper.SetDefault("server.port", "8080")
-	viper.SetDefault("python.baseURL", "http://localhost:8001")
+	viper.SetDefault("python.baseURL", "http://localhost:8000")
 	viper.SetDefault("python.agentPath", "/api/agent")
 	viper.SetDefault("python.agentStreamPath", "/api/agent/stream")
 	viper.SetDefault("python.resumePath", "/api/resume")
 
-	// 从环境变量读取（PYTHON_BASEURL / PYTHON_AGENTPATH 等）
+	// 从环境变量读取（PYTHON_BASEURL / SERVER_PORT 等）。
+	// 必须配置 KeyReplacer：嵌套键 python.baseURL 默认映射到非法环境变量名
+	// PYTHON.BASEURL，替换为下划线后才能命中 compose 注入的 PYTHON_BASEURL。
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	viper.AutomaticEnv()
 
 	// 尝试读取配置文件

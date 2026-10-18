@@ -6,7 +6,11 @@
 """
 
 from __future__ import annotations
+
+import asyncio
+
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 
 from logger import get_logger
 from services.agent_service import AgentService
@@ -16,6 +20,14 @@ router = APIRouter(tags=["技能"])
 logger = get_logger(__name__)
 
 agent_service = AgentService()
+
+
+def _skill_error(exc: Exception) -> JSONResponse:
+    """统一错误映射：参数/技能名错误 400；执行失败 500（不回传内部细节）"""
+    if isinstance(exc, (ValueError, KeyError)):
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+    logger.error("skill execution failed", exc_info=True)
+    return JSONResponse(status_code=500, content={"error": "技能执行失败，请稍后重试"})
 
 
 @router.post(
@@ -38,14 +50,14 @@ agent_service = AgentService()
 )
 async def execute_skill(request: SkillExecuteRequest):
     try:
-        result = agent_service.execute_skill(
-            skill_name=request.skill_name,
-            **request.parameters
+        # AgentService 内部含同步 LLM 调用，放线程池避免阻塞事件循环
+        return await asyncio.to_thread(
+            agent_service.execute_skill,
+            request.skill_name,
+            **request.parameters,
         )
-        return result
     except Exception as e:
-        logger.error(f"Skill execute error: {e}")
-        return {"error": str(e)}
+        return _skill_error(e)
 
 
 @router.post(
@@ -65,15 +77,15 @@ async def execute_skill(request: SkillExecuteRequest):
                 "result": "技能执行结果..."
             }
         },
-    }
+        400: {"description": "参数错误"},
+        500: {"description": "执行错误"},
+    },
 )
 async def execute_skill_auto(user_input: str):
     try:
-        result = agent_service.execute_skill_auto(user_input)
-        return result
+        return await asyncio.to_thread(agent_service.execute_skill_auto, user_input)
     except Exception as e:
-        logger.error(f"Skill auto execute error: {e}")
-        return {"error": str(e)}
+        return _skill_error(e)
 
 
 @router.post(
@@ -91,16 +103,18 @@ async def execute_skill_auto(user_input: str):
                 "params": {}
             }
         },
-    }
+        400: {"description": "参数错误"},
+        500: {"description": "执行错误"},
+    },
 )
 async def route_intent(user_input: str, provider: str | None = None):
     try:
         context = {"provider": provider} if provider else None
-        route_result = agent_service.skill_executor.auto_select_skill(user_input, context)
-        return route_result
+        return await asyncio.to_thread(
+            agent_service.skill_executor.auto_select_skill, user_input, context
+        )
     except Exception as e:
-        logger.error(f"Intent route error: {e}")
-        return {"error": str(e)}
+        return _skill_error(e)
 
 
 @router.get(
@@ -110,8 +124,8 @@ async def route_intent(user_input: str, provider: str | None = None):
 )
 async def list_skills():
     try:
-        skills = agent_service.list_skills()
+        skills = await asyncio.to_thread(agent_service.list_skills)
         return {"skills": skills}
-    except Exception as e:
-        logger.error(f"List skills error: {e}")
-        return {"error": str(e)}
+    except Exception:
+        logger.error("list skills failed", exc_info=True)
+        return JSONResponse(status_code=500, content={"error": "技能列表获取失败"})

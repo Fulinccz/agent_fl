@@ -1,0 +1,6 @@
+# hadolint 全局配置（CI hadolint-action 自动读取）
+ignored:
+  # apk 包不钉死小版本：基础镜像（alpine）自身按镜像标签滚动，
+  # 在 Dockerfile 里钉死 ca-certificates 等包版本反而会在镜像刷新后构建失败。
+  # 基础镜像本身已钉到具体大版本（alpine3.20 / alpine3.22）。
+  - DL3018

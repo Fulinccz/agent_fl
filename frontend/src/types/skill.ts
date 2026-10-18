@@ -13,7 +13,7 @@ export interface SkillRouteInfo {
   /** 决策原因说明 */
   reason: string;
   /** 额外参数 */
-  params?: Record<string, any>;
+  params?: Record<string, unknown>;
 }
 
 /**
@@ -31,7 +31,7 @@ export interface SkillRouteResponse {
   confidence: number;
   source: string;
   reason: string;
-  params?: Record<string, any>;
+  params?: Record<string, unknown>;
   error?: string;
 }
 
@@ -40,14 +40,14 @@ export interface SkillRouteResponse {
  */
 export interface SkillExecuteRequest {
   skill_name: string;
-  parameters?: Record<string, any>;
+  parameters?: Record<string, unknown>;
 }
 
 /**
  * 技能执行响应
  */
 export interface SkillExecuteResponse {
-  result?: any;
+  result?: unknown;
   error?: string;
 }
 
@@ -58,7 +58,7 @@ export interface SkillExecuteAutoResponse {
   /** 路由决策信息 */
   route: SkillRouteInfo;
   /** 技能执行结果 */
-  result: any;
+  result: unknown;
   error?: string;
 }
 

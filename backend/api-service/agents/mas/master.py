@@ -38,6 +38,7 @@ logger = get_logger(__name__)
 STREAM_CHUNK_CHARS = 50
 MAX_TOTAL_ROUNDS = 12   # 调度总轮数上限（防死循环）
 MAX_REPLANS = 1         # 重规划次数上限
+MAX_RETRIES_PER_STEP = 1  # 单步骤重试次数上限（重试预算统一由编排器控制）
 
 
 class MasterOrchestrator:
@@ -56,6 +57,7 @@ class MasterOrchestrator:
             self._max_total_rounds = mas_cfg.max_total_rounds
             self._max_replans = mas_cfg.max_replans
             self._stream_chunk_chars = mas_cfg.stream_chunk_chars
+            self._max_retries_per_step = mas_cfg.reflection.max_step_retries
             if use_llm_reflection is None:
                 use_llm_reflection = mas_cfg.reflection.use_llm
         except Exception as e:
@@ -63,6 +65,7 @@ class MasterOrchestrator:
             self._max_total_rounds = MAX_TOTAL_ROUNDS
             self._max_replans = MAX_REPLANS
             self._stream_chunk_chars = STREAM_CHUNK_CHARS
+            self._max_retries_per_step = MAX_RETRIES_PER_STEP
             if use_llm_reflection is None:
                 use_llm_reflection = True
 
@@ -153,7 +156,7 @@ class MasterOrchestrator:
         context: Dict[str, Any],
         preset_intent: Optional[IntentResult] = None,
     ) -> Generator[Dict[str, Any], None, None]:
-        """流水线实现：意图识别 → Master 规划 → 调度执行 + ReAct 反思 → 结果聚合"""
+        """流水线实现：意图识别 → Master 规划 → 调度执行 → 反思裁决 → 结果聚合"""
         start_ts = time.time()
         blackboard = Blackboard(message=user_input or "", **context)
 
@@ -357,6 +360,7 @@ class MasterOrchestrator:
         """步骤执行后的通用处理：记录结果、输出 step_result / legacy / reflection 事件。
 
         返回 (verdict, reflection) 供调用方做循环控制。
+        反思器无法裁决（None）时，按编排策略保守合成 retry 裁决。
         """
         blackboard.record(result)
         step.result = result
@@ -372,6 +376,15 @@ class MasterOrchestrator:
             reflection = self.reflector.review(
                 step, result, plan.goal, blackboard.trace_lines()
             )
+            if reflection is None:
+                # 评审链无法裁决 → 控制策略兜底：预算内保守重试
+                logger.info(f"[MasterOrchestrator] 步骤 {step.step_id} 评审无法裁决，保守重试")
+                reflection = Reflection(
+                    step_id=step.step_id, verdict=VERDICT_RETRY,
+                    thought="评审器无法裁决，按编排策略保守重试",
+                    feedback="请检查输出格式与完整性后重新执行",
+                    source="policy",
+                )
         update_current_span(output=reflection.to_dict())
         yield {"type": "reflection", "data": reflection.to_dict()}
         return reflection.verdict, reflection
@@ -386,7 +399,10 @@ class MasterOrchestrator:
         blackboard: Blackboard,
         replans: int,
     ) -> tuple:
-        """处理反思裁决，返回 (aborted, finished, updated_replans, replan_event)。"""
+        """处理反思裁决（控制策略唯一入口），返回 (aborted, finished, updated_replans, replan_event)。
+
+        重试预算统一在此执行：retry 裁决超出预算时升级为重规划（沿用重规划预算）。
+        """
         if verdict == VERDICT_CONTINUE:
             return False, False, replans, None
 
@@ -397,36 +413,49 @@ class MasterOrchestrator:
         if verdict == VERDICT_ABORT:
             return True, False, replans, None
 
-        if verdict == VERDICT_RETRY:
+        if verdict == VERDICT_RETRY and step.retries < self._max_retries_per_step:
             step.retries += 1
             step.status = STEP_PENDING
             step.params["_feedback"] = reflection.feedback
             logger.info(
                 f"[MasterOrchestrator] 步骤 {step.step_id} 重试 "
-                f"({step.retries}): {reflection.feedback[:80]}"
+                f"({step.retries}/{self._max_retries_per_step}): {reflection.feedback[:80]}"
             )
             return False, False, replans, None
 
-        if verdict == VERDICT_REPLAN:
-            if replans >= self._max_replans:
-                step.status = STEP_SKIPPED
-                logger.warning("[MasterOrchestrator] 重规划次数用尽，跳过失败步骤")
-                return False, False, replans, None
-            replans += 1
-            new_plan = self.master_agent.replan(
-                goal=plan.goal,
-                trace=blackboard.trace_lines(),
-                failed_step_id=step.step_id,
-                error=result.error or result.summary,
-                feedback=reflection.feedback,
-            )
-            new_steps = new_plan.steps if new_plan is not None else None
-            if new_steps and self._apply_replan(plan, new_steps, failed=step):
-                return False, False, replans, {"type": "plan", "data": plan.to_dict()}
-            step.status = STEP_SKIPPED
-            return False, False, replans, None
+        if verdict in (VERDICT_RETRY, VERDICT_REPLAN):
+            # retry 预算耗尽 / 显式 replan：走重规划
+            return self._do_replan(reflection, step, result, plan, blackboard, replans)
 
         # 未知 verdict：默认继续
+        return False, False, replans, None
+
+    def _do_replan(
+        self,
+        reflection: Reflection,
+        step: TaskStep,
+        result: StepResult,
+        plan: TaskPlan,
+        blackboard: Blackboard,
+        replans: int,
+    ) -> tuple:
+        """执行重规划；预算用尽则跳过失败步骤"""
+        if replans >= self._max_replans:
+            step.status = STEP_SKIPPED
+            logger.warning("[MasterOrchestrator] 重规划次数用尽，跳过失败步骤")
+            return False, False, replans, None
+        replans += 1
+        new_plan = self.master_agent.replan(
+            goal=plan.goal,
+            trace=blackboard.trace_lines(),
+            failed_step_id=step.step_id,
+            error=result.error or result.summary,
+            feedback=reflection.feedback,
+        )
+        new_steps = new_plan.steps if new_plan is not None else None
+        if new_steps and self._apply_replan(plan, new_steps, failed=step):
+            return False, False, replans, {"type": "plan", "data": plan.to_dict()}
+        step.status = STEP_SKIPPED
         return False, False, replans, None
 
     def _execute_step_iter(
@@ -497,6 +526,9 @@ class MasterOrchestrator:
                             "data": {"optimized_resume": accumulated, "partial": True},
                         }
                         last_yielded = len(accumulated)
+            elif ctype == "thought":
+                # ReAct 步内思考事件：实时透传给前端
+                yield chunk
             elif ctype == "error":
                 has_error = chunk.get("content", "生成错误")
 

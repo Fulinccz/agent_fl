@@ -11,11 +11,12 @@ import json
 import asyncio
 import uuid
 from datetime import datetime
-from fastapi import APIRouter, Request, HTTPException, status
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.concurrency import iterate_in_threadpool
 
 from logger import get_logger
+from services.compliance import check_text
 from .common import ChatRequest, ChatResponse, SessionListResponse, handle_error
 from .deps import (
     get_conversation_graph,
@@ -78,6 +79,12 @@ async def _build_rag_context(message: str, enable_rag: bool, enable_graph: bool,
 )
 async def chat(request: ChatRequest):
     try:
+        # 合规风控：与 upload/resume 路由同一套 check_text，先拦截再进 MAS
+        check = check_text(request.message or "", "text")
+        if not check.allowed:
+            logger.warning(f"合规拦截 kind=text: {check.reason}")
+            return JSONResponse(status_code=check.code, content={"error": check.reason})
+
         session_id = request.sessionId
         if not session_id:
             session_id = str(uuid.uuid4())
@@ -165,6 +172,12 @@ async def chat_stream(request: Request, data: ChatRequest):
     session_id = data.sessionId or str(uuid.uuid4())
     logger.info(f"[{call_time}] Chat stream started: session={session_id}")
 
+    # 合规风控：在建立流式连接前拦截（与 upload/resume 路由同一套 check_text）
+    check = check_text(data.message or "", "text")
+    if not check.allowed:
+        logger.warning(f"[{call_time}] 合规拦截 kind=text: {check.reason}")
+        return JSONResponse(status_code=check.code, content={"error": check.reason})
+
     async def event_stream():
         try:
             yield json.dumps({"type": "session", "sessionId": session_id}, ensure_ascii=False) + "\n"
@@ -184,7 +197,6 @@ async def chat_stream(request: Request, data: ChatRequest):
 
             # 主流程：多智能体编排（线程池中迭代同步生成器，避免阻塞事件循环）
             full_response = ""
-            mas_ok = False
             try:
                 orchestrator = get_master_orchestrator()
                 async for event in iterate_in_threadpool(
@@ -199,7 +211,6 @@ async def chat_stream(request: Request, data: ChatRequest):
                         full_response += event.get("content", "")
                     yield json.dumps(event, ensure_ascii=False) + "\n"
                     await asyncio.sleep(0)
-                mas_ok = True
             except Exception as e:
                 logger.warning(f"[{call_time}] MAS stream failed: {e}")
 

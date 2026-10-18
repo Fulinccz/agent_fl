@@ -127,8 +127,8 @@ def _rewrite_docx_aligned(source_path: str, polished_text: str, out_path: str):
     shutil.copyfile(source_path, out_path)
     doc = Document(out_path)
 
-    polished_lines = [l.strip() for l in polished_text.split("\n") if l.strip()]
-    norm_polished = {i: _normalize(l) for i, l in enumerate(polished_lines)}
+    polished_lines = [line.strip() for line in polished_text.split("\n") if line.strip()]
+    norm_polished = {i: _normalize(line) for i, line in enumerate(polished_lines)}
 
     body_paras = [p for p in doc.paragraphs if p.text.strip()]
     norm_body = {id(p): _normalize(p.text) for p in body_paras}

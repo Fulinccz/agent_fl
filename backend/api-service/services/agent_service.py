@@ -128,7 +128,7 @@ class AgentService:
         
         try:
             result = self.skill_executor.execute_auto(user_input, context, **kwargs)
-            self.logger.info(f"Auto skill execution completed")
+            self.logger.info("Auto skill execution completed")
             return result
         except Exception as err:
             self.logger.error(f"Auto skill execution failed: {err}", exc_info=True)

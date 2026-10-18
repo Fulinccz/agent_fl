@@ -82,9 +82,9 @@ public class FlinkResumeJob {
             }
         }).name("FilterValid");
 
-        // Sink to Redis (batch mode with exactly-once semantics)
-        // 使用 BatchRedisSink 的批量写入 + 幂等设计保证数据一致性
-        // 幂等性基于：相同的 resume_id 写入 Redis 会覆盖旧值
+        // Sink to Redis（有界批处理）
+        // BatchRedisSink 批量写入 + 幂等设计：相同 resume_id 重跑会覆盖旧值，
+        // 失败时作业整体报错重跑（at-least-once 传递 + 幂等输出 ≈ effectively-once）
         validResumes.addSink(new BatchRedisSink(redisHost, redisPort, redisPassword,
                 redisDb, redisTtl, keyPrefix, setKey))
                 .name("BatchRedisSink");

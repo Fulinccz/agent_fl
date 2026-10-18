@@ -7,19 +7,26 @@ import redis.clients.jedis.JedisPoolConfig;
 import redis.clients.jedis.Pipeline;
 import redis.clients.jedis.Response;
 
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * 批量 Redis Sink（有界批处理作业）。
+ *
+ * 设计要点：
+ * 1. 去重粒度是 resume（resumeId），不是项目名——多份简历可以描述同名项目，
+ *    旧实现按项目名去重会丢弃绝大多数简历。
+ * 2. 项目名仅作为二级索引写入 project_names 集合；抽不到项目名不影响简历写入。
+ * 3. 写入幂等（HSET 覆盖、EXPIRE 重设、SADD 去重），作业可安全重跑。
+ * 4. 重试耗尽后抛出异常让作业失败（有界作业可整体重跑），绝不静默丢批。
+ */
 @SuppressWarnings("deprecation")
 public class BatchRedisSink extends RichSinkFunction<Resume> {
 
     private static final Pattern PROJECT_NAME_PATTERN = Pattern.compile("项目背景[：:]\\s*(.*?)[。；;]");
     private static final String PROJECT_SET_KEY = "project_names";
     private static final int BATCH_SIZE = 100;
-    private static final int MAX_BUFFER_SIZE = 1000;
     private static final int MAX_RETRY = 3;
 
     private final String redisHost;
@@ -32,10 +39,11 @@ public class BatchRedisSink extends RichSinkFunction<Resume> {
 
     private transient JedisPool jedisPool;
     private transient List<Resume> buffer;
-    private transient Set<String> batchProjectNames;
+    private transient Set<String> batchResumeIds;
     private transient int totalProcessed;
     private transient int totalWritten;
     private transient int totalDeduped;
+    private transient int totalNoProjectName;
 
     public BatchRedisSink(String redisHost, int redisPort, String redisPassword,
                           int redisDb, int ttl, String keyPrefix, String setKey) {
@@ -64,61 +72,56 @@ public class BatchRedisSink extends RichSinkFunction<Resume> {
         }
 
         buffer = new ArrayList<>();
-        batchProjectNames = new HashSet<>();
+        batchResumeIds = new HashSet<>();
         totalProcessed = 0;
         totalWritten = 0;
         totalDeduped = 0;
+        totalNoProjectName = 0;
     }
 
     @Override
     public void invoke(Resume resume, org.apache.flink.streaming.api.functions.sink.legacy.SinkFunction.Context context) {
-        if (resume == null || resume.getResumeId() == null) {
+        if (resume == null || resume.getResumeId() == null || resume.getResumeId().isEmpty()) {
             return;
         }
 
-        String projectName = extractProjectName(resume.getProjectDescription());
-        if (projectName == null || projectName.isEmpty()) {
-            return;
-        }
-
-        // Batch internal dedup
-        if (batchProjectNames.contains(projectName)) {
+        // 批内按 resumeId 去重（MySQL 主键级粒度，同名项目的不同简历都保留）
+        if (!batchResumeIds.add(resume.getResumeId())) {
             totalDeduped++;
             return;
         }
 
         buffer.add(resume);
-        batchProjectNames.add(projectName);
+        totalProcessed++;
 
-        // Safety check: flush if buffer too large
-        if (buffer.size() >= BATCH_SIZE || buffer.size() >= MAX_BUFFER_SIZE) {
+        if (buffer.size() >= BATCH_SIZE) {
             flushWithRetry();
         }
     }
 
     private void flushWithRetry() {
-        int retry = 0;
-        while (retry < MAX_RETRY) {
+        Exception lastError = null;
+        for (int retry = 1; retry <= MAX_RETRY; retry++) {
             try {
                 flush();
                 return;
             } catch (Exception e) {
-                retry++;
+                lastError = e;
                 System.err.println("[Batch] Flush failed (attempt " + retry + "/" + MAX_RETRY + "): " + e.getMessage());
-                if (retry >= MAX_RETRY) {
-                    System.err.println("[Batch] Dropping batch of " + buffer.size() + " records after " + MAX_RETRY + " retries");
-                    buffer.clear();
-                    batchProjectNames.clear();
-                    return;
-                }
-                try {
-                    Thread.sleep(1000 * retry);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    return;
+                if (retry < MAX_RETRY) {
+                    try {
+                        Thread.sleep(1000L * retry);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new RuntimeException("Interrupted while waiting to retry Redis flush", ie);
+                    }
                 }
             }
         }
+        // 有界批处理 + 幂等写入：失败时让作业整体失败重跑，比静默丢数据安全
+        throw new RuntimeException(
+                "Redis flush failed after " + MAX_RETRY + " retries, " + buffer.size() + " records unwritten",
+                lastError);
     }
 
     private void flush() {
@@ -126,43 +129,31 @@ public class BatchRedisSink extends RichSinkFunction<Resume> {
             return;
         }
 
+        List<Resume> batch = new ArrayList<>(buffer);
+
         try (Jedis jedis = jedisPool.getResource()) {
-            // Build project name list
-            List<String> projectNames = new ArrayList<>();
-            for (Resume r : buffer) {
-                String name = extractProjectName(r.getProjectDescription());
-                if (name != null) {
-                    projectNames.add(name);
+            // 批量查询哪些 resumeId 已存在（仅用于统计与省带宽；HSET 本身幂等）
+            Set<String> existingIds = new HashSet<>();
+            Pipeline checkPipe = jedis.pipelined();
+            List<Response<Boolean>> responses = new ArrayList<>();
+            for (Resume r : batch) {
+                responses.add(checkPipe.sismember(setKey, r.getResumeId()));
+            }
+            checkPipe.sync();
+            for (int i = 0; i < responses.size(); i++) {
+                if (Boolean.TRUE.equals(responses.get(i).get())) {
+                    existingIds.add(batch.get(i).getResumeId());
                 }
             }
 
-            // Batch check Redis using pipeline
-            Set<String> existingProjects = new HashSet<>();
-            if (!projectNames.isEmpty()) {
-                Pipeline checkPipe = jedis.pipelined();
-                List<Response<Boolean>> responses = new ArrayList<>();
-                for (String name : projectNames) {
-                    responses.add(checkPipe.sismember(PROJECT_SET_KEY, name));
-                }
-                checkPipe.sync();
-                for (int i = 0; i < responses.size(); i++) {
-                    if (responses.get(i).get()) {
-                        existingProjects.add(projectNames.get(i));
-                    }
-                }
-            }
-
-            // Write valid resumes
             Pipeline writePipe = jedis.pipelined();
             int written = 0;
             int redisDeduped = 0;
+            int noProjectName = 0;
 
-            for (Resume resume : buffer) {
-                String projectName = extractProjectName(resume.getProjectDescription());
-                if (projectName == null || existingProjects.contains(projectName)) {
-                    if (projectName != null && existingProjects.contains(projectName)) {
-                        redisDeduped++;
-                    }
+            for (Resume resume : batch) {
+                if (existingIds.contains(resume.getResumeId())) {
+                    redisDeduped++;
                     continue;
                 }
 
@@ -172,42 +163,54 @@ public class BatchRedisSink extends RichSinkFunction<Resume> {
                 fields.put("university_type", resume.getUniversityType() == null ? "" : resume.getUniversityType());
                 fields.put("work_description", resume.getWorkDescription() == null ? "" : resume.getWorkDescription());
                 fields.put("project_description", resume.getProjectDescription() == null ? "" : resume.getProjectDescription());
-                fields.put("hash", computeHash(resume));
+                fields.put("hash", resume.getHash());
 
                 writePipe.hset(key, fields);
                 writePipe.expire(key, ttl);
                 writePipe.sadd(setKey, resume.getResumeId());
-                writePipe.sadd(PROJECT_SET_KEY, projectName);
+
+                // 项目名只做二级索引；抽不到不丢简历，仅计数
+                String projectName = extractProjectName(resume.getProjectDescription());
+                if (projectName != null && !projectName.isEmpty()) {
+                    writePipe.sadd(PROJECT_SET_KEY, projectName);
+                } else {
+                    noProjectName++;
+                }
                 written++;
             }
 
             writePipe.sync();
 
-            totalProcessed += buffer.size();
             totalWritten += written;
             totalDeduped += redisDeduped;
+            totalNoProjectName += noProjectName;
 
-            System.out.println("[Batch] Batch: processed=" + buffer.size() +
+            System.out.println("[Batch] Batch: size=" + batch.size() +
                     ", written=" + written +
-                    ", batchDeduped=" + (buffer.size() - written - redisDeduped) +
                     ", redisDeduped=" + redisDeduped +
+                    ", noProjectName=" + noProjectName +
                     ", totalProcessed=" + totalProcessed +
                     ", totalWritten=" + totalWritten +
                     ", totalDeduped=" + totalDeduped);
         }
 
+        // 仅在整批写入成功后清空缓冲（失败时保留，供重试或失败传播）
         buffer.clear();
-        batchProjectNames.clear();
+        batchResumeIds.clear();
     }
 
     @Override
     public void close() {
-        flushWithRetry();
-        System.out.println("[Batch] Final stats: processed=" + totalProcessed +
-                ", written=" + totalWritten +
-                ", deduped=" + totalDeduped);
-        if (jedisPool != null) {
-            jedisPool.close();
+        try {
+            flushWithRetry();
+        } finally {
+            System.out.println("[Batch] Final stats: processed=" + totalProcessed +
+                    ", written=" + totalWritten +
+                    ", deduped=" + totalDeduped +
+                    ", noProjectName=" + totalNoProjectName);
+            if (jedisPool != null) {
+                jedisPool.close();
+            }
         }
     }
 
@@ -220,21 +223,5 @@ public class BatchRedisSink extends RichSinkFunction<Resume> {
             return matcher.group(1).trim();
         }
         return null;
-    }
-
-    private String computeHash(Resume resume) {
-        String content = (resume.getWorkDescription() == null ? "" : resume.getWorkDescription()) +
-                        (resume.getProjectDescription() == null ? "" : resume.getProjectDescription());
-        try {
-            MessageDigest md = MessageDigest.getInstance("MD5");
-            byte[] digest = md.digest(content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            StringBuilder sb = new StringBuilder();
-            for (byte b : digest) {
-                sb.append(String.format("%02x", b));
-            }
-            return sb.toString();
-        } catch (NoSuchAlgorithmException e) {
-            return String.valueOf(content.hashCode());
-        }
     }
 }

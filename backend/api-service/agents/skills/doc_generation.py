@@ -36,8 +36,8 @@ class ResumeDocxSkill:
         doc = Document()
         self._setup_page(doc)
 
-        lines = [l.strip() for l in text.split("\n")]
-        lines = [l for l in lines if l]
+        lines = [line.strip() for line in text.split("\n")]
+        lines = [line for line in lines if line]
         if not lines:
             raise ValueError("简历文本为空，无法生成文档")
 

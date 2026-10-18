@@ -1,6 +1,6 @@
 """多智能体系统（Master-Slave）核心数据结构
 
-定义意图识别结果、任务计划、步骤结果、ReAct 反思结果等状态对象。
+定义意图识别结果、任务计划、步骤结果、反思裁决结果等状态对象。
 """
 from __future__ import annotations
 
@@ -107,7 +107,7 @@ class StepResult:
         }
 
 
-# ============ ReAct 反思裁决常量 ============
+# ============ 反思裁决常量 ============
 VERDICT_CONTINUE = "continue"   # 结果合格，继续下一步
 VERDICT_RETRY = "retry"         # 结果不合格，重试当前步骤
 VERDICT_REPLAN = "replan"       # 多次失败，重新规划剩余步骤
@@ -117,12 +117,12 @@ VERDICT_ABORT = "abort"         # 无法继续，终止流程
 
 @dataclass
 class Reflection:
-    """ReAct 反思结果"""
+    """反思裁决结果（Reflector 产出，Master 据此执行控制策略）"""
     step_id: str = ""
     verdict: str = VERDICT_CONTINUE
-    thought: str = ""            # ReAct Thought
+    thought: str = ""            # 评审思考过程
     feedback: str = ""           # 重试时给执行器的改进反馈
-    source: str = "rule"         # rule / llm
+    source: str = "rule"         # rule / llm / policy
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -162,7 +162,7 @@ class Blackboard:
         return merged
 
     def trace_lines(self) -> List[str]:
-        """生成 ReAct Observation 轨迹文本（供反思/重规划提示词使用）"""
+        """生成 Observation 执行轨迹文本（供反思/重规划提示词使用）"""
         lines = []
         for step_id, result in self.results.items():
             status = "成功" if result.success else f"失败({result.error[:80]})"

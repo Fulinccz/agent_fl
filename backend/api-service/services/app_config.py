@@ -66,9 +66,16 @@ class ModelsConfig(BaseModel):
 
 
 class ReflectionConfig(BaseModel):
-    """ReAct 反思器配置"""
+    """反思器配置（重试预算由 MasterOrchestrator 消费）"""
     use_llm: bool = True
-    max_retries: int = 1
+    # 单步骤重试次数上限（与 models.deepseek.max_retries 作用域不同，后者为 API 网络重试）
+    max_step_retries: int = 1
+
+
+class ReactConfig(BaseModel):
+    """ReAct 步内回路配置（chat 执行器，Thought→Action→Observation）"""
+    enabled: bool = False       # 默认关闭：多一轮决策调用会增加对话首字延迟
+    max_tool_rounds: int = 1
 
 
 class MasConfig(BaseModel):
@@ -77,6 +84,7 @@ class MasConfig(BaseModel):
     max_replans: int = 1
     stream_chunk_chars: int = 50
     reflection: ReflectionConfig = Field(default_factory=ReflectionConfig)
+    react: ReactConfig = Field(default_factory=ReactConfig)
 
 
 class RagConfig(BaseModel):

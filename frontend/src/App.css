@@ -415,6 +415,27 @@
   border-bottom: 1px solid var(--border);
 }
 
+/* ReAct 思考过程（折叠面板） */
+.thought-panel {
+  padding: 0.4rem 1rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.78rem;
+  color: var(--text-3);
+}
+
+.thought-panel summary {
+  cursor: pointer;
+  user-select: none;
+  color: var(--text-2);
+}
+
+.thought-panel .thought-item {
+  margin: 0.35rem 0 0;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--border);
+  line-height: 1.5;
+}
+
 .pipeline-step {
   display: flex;
   align-items: center;

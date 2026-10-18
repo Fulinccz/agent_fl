@@ -245,10 +245,7 @@ class JobCrawler:
                             tags.push(t.textContent?.trim());
                         });
 
-                        const shortId = href ? btoa(href).substring(0, 16) : '';
-
                         result.push({
-                            id: shortId,
                             title: title,
                             salary: salary,
                             company: company,
@@ -260,6 +257,13 @@ class JobCrawler:
                     return result;
                 }
             """)
+
+            # 稳定 ID：与智联一致用 URL 的 md5 前 16 位。
+            # 旧实现 btoa(href).substring(0,16) 只依赖 URL 前 12 个字节，
+            # 而同站 URL 前缀高度重合，导致大量碰撞。
+            for job in jobs:
+                href = job.get('source_url') or ''
+                job['id'] = hashlib.md5(href.encode()).hexdigest()[:16] if href else ''
 
             return jobs
         finally:

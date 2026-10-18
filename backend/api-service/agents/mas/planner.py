@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any, Dict, List, Optional
 
 from logger import get_logger
@@ -202,11 +201,12 @@ class MasterAgent:
 
     def _parse_steps(self, raw: str, require_list: bool = False) -> Optional[List[TaskStep]]:
         """从 LLM 输出中解析步骤列表，并校验执行器合法性"""
-        match = re.search(r"\{.*\}", raw, re.DOTALL)
-        if not match:
+        from services.json_utils import extract_json_object
+        json_str = extract_json_object(raw)
+        if not json_str:
             return None
         try:
-            data = json.loads(match.group())
+            data = json.loads(json_str)
         except json.JSONDecodeError:
             return None
 

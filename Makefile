@@ -1,4 +1,5 @@
-.PHONY: help test test-go test-python lint lint-go lint-python build build-go build-python build-frontend up down logs clean
+.PHONY: help test test-go test-python lint lint-go lint-python build build-go build-python build-frontend \
+	up down logs restart status dev dev-go dev-python dev-frontend db-migrate db-init clean
 
 .DEFAULT_GOAL := help
 
@@ -14,14 +15,15 @@ help: ## Show this help message
 
 test: test-go test-python ## Run all tests (Go + Python)
 
-test-go: ## Run Go tests with race detector
-	cd backend/api-gateway && go test ./tests/... -v -race -count=1
+test-go: ## Run Go tests (race detector runs in CI; needs gcc locally)
+	cd backend/api-gateway && go test ./... -count=1
 
 test-python: ## Run Python tests with coverage
 	cd backend/api-service && \
 		pytest tests/ -v --tb=short \
-			--cov=agents --cov=cache --cov=rag \
-			--cov-report=term-missing 2>&1 || true
+			--cov=agents --cov=cache --cov=rag --cov=api \
+			--cov=services --cov=middleware --cov=skillhub \
+			--cov-report=term-missing
 
 # ---------------------------------------------------------------------------
 # Lint
@@ -33,7 +35,7 @@ lint-go: ## Go vet + staticcheck
 	cd backend/api-gateway && go vet ./...
 
 lint-python: ## Python ruff check
-	cd backend/api-service && ruff check . || true
+	cd backend/api-service && ruff check .
 
 # ---------------------------------------------------------------------------
 # Build
@@ -104,4 +106,4 @@ clean: ## Remove caches, builds, and containers
 	cd backend/api-gateway && go clean -cache
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name .pytest_cache -exec rm -rf {} + 2>/dev/null || true
-	find . -type d -node name dist -exec rm -rf {} + 2>/dev/null || true
+	find . -type d -name dist -exec rm -rf {} + 2>/dev/null || true

@@ -1,9 +1,11 @@
 package apitest
 
 import (
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"agent-api/internal/config"
@@ -11,6 +13,32 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// startTCPTestServer 在 IPv4 回环上启动测试 HTTP 服务；环境不允许监听时跳过
+func startTCPTestServer(t *testing.T, handler http.Handler) *httptest.Server {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("cannot listen on loopback in this environment: %v", err)
+	}
+	srv := httptest.NewUnstartedServer(handler)
+	srv.Listener = ln
+	srv.Start()
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// startProxyServer 启动一个真实 TCP 回环的网关测试实例（避免 ResponseRecorder 不支持 SSE flush 协议）
+func startProxyServer(t *testing.T, baseURL string) *httptest.Server {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	proxy.SetConfig(&config.Config{
+		Python: config.PythonConfig{BaseURL: baseURL},
+	})
+	r := gin.New()
+	r.Any("/api/*path", proxy.PythonReverseProxy())
+	return startTCPTestServer(t, r)
+}
 
 func TestHealthCheck_Returns200(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -26,95 +54,106 @@ func TestHealthCheck_Returns200(t *testing.T) {
 	}
 }
 
-func TestNewProxyRequest_BuildsCorrectURL(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request, _ = http.NewRequest("POST", "/api/test", nil)
+func TestReverseProxy_ForwardsPathQueryHeadersBody(t *testing.T) {
+	var gotMethod, gotPath, gotQuery, gotAuth, gotBody string
+	upstream := startTCPTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		gotAuth = r.Header.Get("Authorization")
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.Header().Set("X-Upstream", "python")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"ok":true}`))
+	}))
 
-	cfg := proxy.ProxyConfig{
-		TargetBaseURL: "http://localhost:8000",
-		TargetPath:    "/api/chat",
-		Method:        "POST",
-	}
+	gw := startProxyServer(t, upstream.URL)
 
-	proxyReq, err := proxy.NewProxyRequest(c, cfg)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	expectedURL := "http://localhost:8000/api/chat"
-	if proxyReq.URL.String() != expectedURL {
-		t.Errorf("URL mismatch: got %s, want %s", proxyReq.URL.String(), expectedURL)
-	}
-	if proxyReq.Method != "POST" {
-		t.Errorf("Method mismatch: got %s, want POST", proxyReq.Method)
-	}
-}
-
-func TestNewProxyRequest_ForwardsHeaders(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest("POST", "/api/test", nil)
-	req.Header.Set("X-Custom-Header", "test-value")
+	req, _ := http.NewRequest("POST", gw.URL+"/api/resume/export-docx?format=docx", strings.NewReader("hello-body"))
 	req.Header.Set("Authorization", "Bearer token123")
-	c, _ := gin.CreateTestContext(w)
-	c.Request = req
-
-	cfg := proxy.ProxyConfig{
-		TargetBaseURL: "http://target:8000",
-		TargetPath:    "/path",
-		Method:        "POST",
-	}
-
-	proxyReq, err := proxy.NewProxyRequest(c, cfg)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("request failed: %v", err)
 	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
 
-	if proxyReq.Header.Get("X-Custom-Header") != "test-value" {
-		t.Error("X-Custom-Header not forwarded")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", resp.StatusCode, body)
 	}
-	if proxyReq.Header.Get("Authorization") != "Bearer token123" {
-		t.Error("Authorization header not forwarded")
+	if gotMethod != "POST" {
+		t.Errorf("method: got %s, want POST", gotMethod)
+	}
+	if gotPath != "/api/resume/export-docx" {
+		t.Errorf("path: got %s", gotPath)
+	}
+	if gotQuery != "format=docx" {
+		t.Errorf("query string lost: got %q", gotQuery)
+	}
+	if gotAuth != "Bearer token123" {
+		t.Errorf("Authorization not forwarded: %q", gotAuth)
+	}
+	if gotBody != "hello-body" {
+		t.Errorf("body: got %q", gotBody)
+	}
+	if resp.Header.Get("X-Upstream") != "python" {
+		t.Error("upstream response header not forwarded")
 	}
 }
 
-func TestExecuteProxy_TargetUnreachable(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request, _ = http.NewRequest("GET", "/api/test", nil)
+func TestReverseProxy_PropagatesUpstreamStatus(t *testing.T) {
+	upstream := startTCPTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte("not found"))
+	}))
 
-	cfg := proxy.ProxyConfig{
-		TargetBaseURL: "http://nonexistent-host-99999:1",
-		TargetPath:    "/test",
-		Method:        "GET",
+	gw := startProxyServer(t, upstream.URL)
+	resp, err := http.Post(gw.URL+"/api/agent/stream", "application/json", nil)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
+	defer resp.Body.Close()
 
-	resp := proxy.ExecuteProxy(c, cfg)
-	if resp.StatusCode != 502 {
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404 from upstream, got %d", resp.StatusCode)
+	}
+}
+
+func TestReverseProxy_UpstreamUnreachable_Returns502(t *testing.T) {
+	// 未监听的本地端口
+	gw := startProxyServer(t, "http://127.0.0.1:1")
+	resp, err := http.Get(gw.URL + "/api/skill/list")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusBadGateway {
 		t.Errorf("expected 502 for unreachable target, got %d", resp.StatusCode)
 	}
-	if resp.Error == nil {
-		t.Error("expected error for unreachable target")
+	if !strings.Contains(string(body), "Bad Gateway") {
+		t.Errorf("502 body should contain generic error, got: %s", body)
 	}
 }
 
-func TestCopyResponse_ErrorReturnsJSON(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
+func TestReverseProxy_RejectsOversizedBody(t *testing.T) {
+	upstream := startTCPTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
 
-	proxyResp := &proxy.ProxyResponse{
-		StatusCode: 500,
-		Error:      http.ErrAbortHandler,
+	gw := startProxyServer(t, upstream.URL)
+	big := strings.NewReader(strings.Repeat("x", (20<<20)+1))
+	resp, err := http.Post(gw.URL+"/api/agent/upload_stream", "application/octet-stream", big)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
 	}
+	defer resp.Body.Close()
 
-	proxy.CopyResponse(c, proxyResp)
-
-	if w.Code != 500 {
-		t.Errorf("expected status 500, got %d", w.Code)
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("expected 413 for oversized body, got %d", resp.StatusCode)
 	}
 }
 
@@ -129,36 +168,5 @@ func TestSetConfig(t *testing.T) {
 	}
 	if proxy.GetAppConfig().Python.BaseURL != "http://custom:9000" {
 		t.Errorf("BaseURL mismatch: got %s", proxy.GetAppConfig().Python.BaseURL)
-	}
-}
-
-func TestExecuteStreamProxy_NonexistentPath(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Skipf("skipping: cannot create tcp listener on this system: %v", err)
-	}
-	baseURL := "http://" + listener.Addr().String()
-	go http.Serve(listener, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(404)
-		w.Write([]byte("not found"))
-	}))
-	defer listener.Close()
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request, _ = http.NewRequest("POST", "/api/agent/stream", nil)
-
-	streamCfg := proxy.StreamProxyConfig{
-		TargetBaseURL: baseURL,
-		TargetPath:    "/test-stream",
-		BufferSize:    64,
-	}
-
-	proxy.ExecuteStreamProxy(c, streamCfg)
-
-	if w.Code != 404 {
-		t.Errorf("expected 404 from upstream, got %d", w.Code)
 	}
 }

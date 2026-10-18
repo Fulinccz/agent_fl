@@ -3,6 +3,8 @@
 直接全部导入，不做关键词筛选
 """
 import csv
+import hashlib
+import json
 import os
 from typing import List, Dict, Any, Optional
 from pathlib import Path
@@ -101,6 +103,21 @@ class ResumeImporter:
             'batches': batch_count
         }
 
+    @staticmethod
+    def _stable_resume_id(name: str, row: Dict[str, str]) -> str:
+        """生成跨进程稳定的简历 ID。
+
+        - 不能用内置 hash()：受 PYTHONHASHSEED 影响，每次导入都变，
+          重跑会产生新 ID，幂等导入失效；
+        - 不能只用姓名：同名不同人会互相覆盖。
+        方案：可读前缀（姓名）+ 整行内容的 md5 摘要，
+        同名不同内容可区分，完全重复的行自然去重。
+        """
+        canonical = json.dumps(row, ensure_ascii=False, sort_keys=True, default=str)
+        digest = hashlib.md5(canonical.encode("utf-8")).hexdigest()[:12]
+        slug = (name or "resume").strip()[:32]
+        return f"{slug}_{digest}"
+
     def _parse_row(self, row: Dict[str, str]) -> Optional[Dict[str, Any]]:
         """
         解析 CSV 行数据（只提取需要的字段）
@@ -108,7 +125,7 @@ class ResumeImporter:
         try:
             name = row.get('姓名', row.get('name', ''))
             resume = {
-                'resume_id': name or f"resume_{hash(str(row))}",
+                'resume_id': self._stable_resume_id(name, row),
                 'gender': row.get('性别', row.get('gender')),
                 'age': self._parse_int(row.get('年龄', row.get('age'))),
                 'target_position': row.get('意向岗位', row.get('target_position')),
@@ -118,9 +135,6 @@ class ResumeImporter:
                 'project_description': row.get('project_description', ''),
                 'source': 'tianchi',
             }
-
-            if not resume['resume_id']:
-                return None
 
             return resume
 

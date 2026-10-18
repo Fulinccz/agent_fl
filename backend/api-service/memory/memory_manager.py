@@ -1,7 +1,7 @@
 import uuid
 from typing import Dict, List, Optional, Any
 from datetime import datetime
-from .sqlite_memory import SQLiteMemoryStore, ConversationMemory, get_memory_store
+from .sqlite_memory import SQLiteMemoryStore, get_memory_store
 from logger import get_logger
 
 logger = get_logger(__name__)

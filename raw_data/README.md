@@ -11,6 +11,10 @@ raw_data/
 ├── sql/
 │   ├── job_init.sql         # 职位表结构
 │   └── resume_init.sql      # 简历表结构
+├── alembic/                 # 数据库迁移版本
+├── alembic.ini              # Alembic 配置
+├── init_db.py               # 建库/建表初始化脚本
+├── enrich_resumes.py        # 简历合成增强（天池数据 + 8 类项目模板）
 ├── src/
 │   ├── logger.py            # 日志模块
 │   ├── job/                 # 职位模块
@@ -21,11 +25,9 @@ raw_data/
 │   └── resume/              # 简历模块
 │       ├── models.py        # 数据模型
 │       ├── database.py      # 数据库操作
-│       └── importer.py      # CSV导入器
-├── data/                    # SQLite数据库目录
-├── .env                     # 环境变量配置
-├── test_job.py              # 职位模块测试
-├── test_resume.py           # 简历模块测试
+│       └── importer.py      # CSV导入器（内容哈希稳定 ID，重跑幂等）
+├── data/                    # SQLite 数据库 / CSV 数据目录（运行时生成，不入 git）
+├── .env                     # 环境变量配置（不入 git）
 └── requirements.txt         # 依赖
 ```
 
@@ -66,9 +68,12 @@ LOG_LEVEL=INFO
 
 ## 一、职位(JD)采集
 
-### 1. 快速测试
+### 1. 初始化表结构
 ```bash
-python test_job.py
+# MySQL：直接执行 SQL
+mysql -u root -p < sql/job_init.sql
+# 或使用 Alembic 迁移（job / resume 两库都建）
+alembic upgrade head
 ```
 
 ### 2. 命令行采集
@@ -82,6 +87,8 @@ python -m src.job.collector Python Java Go --city 上海 --pages 3
 # 只抓列表，不获取JD（更快）
 python -m src.job.collector Python --no-jd
 ```
+
+> 职位 ID 为原始链接 MD5 前 16 位（智联 / 51job 统一规则），重复采集按 `job_id` 去重，可安全重跑。
 
 ### 3. 代码中使用
 ```python
@@ -146,9 +153,9 @@ jobs = db.get_jobs(source="zhaopin", limit=10)
 - 下载 `Chinese_resume_data.csv`
 - 放到 `data/` 目录
 
-### 1. 快速测试
+### 1. 建表
 ```bash
-python test_resume.py
+mysql -u root -p < sql/resume_init.sql
 ```
 
 ### 2. 导入CSV
@@ -156,9 +163,13 @@ python test_resume.py
 # 命令行导入
 python -m src.resume.importer data/Chinese_resume_data.csv
 
-# 指定批量大小
-python -m src.resume.importer data/Chinese_resume_data.csv --batch-size 200
+# 指定批量大小与最大批次数
+python -m src.resume.importer data/Chinese_resume_data.csv --batch-size 200 --max-batches 50
 ```
+
+> `resume_id` 由姓名 slug + 整行内容哈希生成（跨进程稳定），同一份 CSV 重复导入不会产生重复简历；`skipped` 即跳过的重复行数。
+>
+> 如需生成"有项目经历"的增强简历（8 类项目描述模板），先导入再执行：`python enrich_resumes.py`。
 
 ### 3. 代码中使用
 ```python
@@ -182,9 +193,6 @@ resumes = db.get_resumes(target_position="算法工程师", limit=10)
 
 # 按学历查询
 resumes = db.get_resumes(degree="硕士", limit=10)
-
-# 按筛选结果查询
-resumes = db.get_resumes(screening_result=1, limit=10)
 ```
 
 ## 三、数据库说明
@@ -205,16 +213,16 @@ resumes = db.get_resumes(screening_result=1, limit=10)
 ### 简历表 (resumes)
 | 字段 | 说明 |
 |------|------|
-| resume_id | 简历编号 |
-| name | 姓名 |
+| resume_id | 简历稳定编号（姓名 slug + 行内容哈希，唯一） |
 | gender | 性别 |
 | age | 年龄 |
 | target_position | 意向岗位 |
-| degree | 学历 |
+| degree | 学历层次 |
 | university_type | 院校类别 |
-| major_category | 专业类别 |
-| skills | 技能(JSON) |
-| screening_result | 筛选结果 |
+| work_description | 工作描述 |
+| project_description | 项目描述（enrich_resumes.py 合成增强） |
+| source | 数据来源（默认 tianchi） |
+| created_at / updated_at | 创建 / 更新时间 |
 
 ## 四、切换 MySQL
 

@@ -1,9 +1,14 @@
 package middleware
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net/http"
+	"runtime/debug"
 	"time"
+
+	"agent-api/pkg/logger"
 
 	"github.com/gin-gonic/gin"
 )
@@ -18,31 +23,34 @@ type ErrorResponse struct {
 	Path      string `json:"path"`
 }
 
-// Recovery 返回错误恢复中间件
+// newTraceID 生成 16 字符十六进制链路 ID
+func newTraceID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return time.Now().Format("20060102150405")
+	}
+	return hex.EncodeToString(b)
+}
+
+// Recovery 返回错误恢复中间件。
+// panic 堆栈仅记录在服务端日志，响应体不泄漏内部错误细节。
 func Recovery() gin.HandlerFunc {
 	return gin.CustomRecovery(func(c *gin.Context, recovered interface{}) {
 		traceID := c.GetHeader("X-Trace-Id")
 		if traceID == "" {
-			traceID = c.Writer.Header().Get("X-Trace-Id")
+			traceID = newTraceID()
 		}
 
-		var message string
-		if err, ok := recovered.(string); ok {
-			message = err
-		} else if err, ok := recovered.(error); ok {
-			message = err.Error()
-		} else {
-			message = fmt.Sprintf("unknown error: %v", recovered)
-		}
-
-		// 记录错误日志
-		c.Error(fmt.Errorf("panic recovered: %s", message))
+		logger.GetLogger().Errorf(
+			"panic recovered: trace=%s path=%s err=%v\n%s",
+			traceID, c.Request.URL.Path, recovered, debug.Stack(),
+		)
 
 		c.JSON(http.StatusInternalServerError, ErrorResponse{
 			Timestamp: time.Now().Format(time.RFC3339),
 			Status:    http.StatusInternalServerError,
 			Error:     "Internal Server Error",
-			Message:   message,
+			Message:   fmt.Sprintf("服务器内部错误（trace_id: %s）", traceID),
 			TraceID:   traceID,
 			Path:      c.Request.URL.Path,
 		})

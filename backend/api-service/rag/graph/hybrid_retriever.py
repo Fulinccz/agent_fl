@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from logger import get_logger
 from rag.retriever import RAGRetriever
 from .graph_retriever import GraphRetriever
@@ -235,7 +235,6 @@ class HybridRetriever:
         if context_results:
             context_parts = []
             for i, ctx in enumerate(context_results, 1):
-                source = ctx.get("metadata", {}).get("source", "知识库")
                 sources = ctx.get("sources", ["unknown"])
                 content = ctx.get("content", "")
                 fusion_score = ctx.get("fusion_score", 0)

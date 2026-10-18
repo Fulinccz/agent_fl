@@ -10,6 +10,7 @@ LangGraph 对话工作流（降级回退路径）
 适配 LangGraph 1.1.9 + LangChain 1.2.15
 """
 
+import asyncio
 from typing import TypedDict, List, Dict, Any, Optional
 from dataclasses import dataclass
 
@@ -133,9 +134,10 @@ class ConversationGraph:
         if hasattr(llm, "agenerate"):
             result = await llm.agenerate(prompt)
         elif hasattr(llm, "generate"):
-            result = llm.generate(prompt)
+            # 同步推理会阻塞事件循环（本地 GGUF 单次生成可达数十秒），放线程池执行
+            result = await asyncio.to_thread(llm.generate, prompt)
         else:
-            result = llm(prompt)
+            result = await asyncio.to_thread(llm, prompt)
 
         return result if isinstance(result, str) else str(result)
 

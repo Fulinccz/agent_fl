@@ -8,7 +8,6 @@
 """
 from unittest.mock import MagicMock
 
-import pytest
 
 from agents.skills.resume_agents.polish_agent import ResumePolishAgent
 

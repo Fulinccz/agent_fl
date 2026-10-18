@@ -4,6 +4,9 @@
 #   minio/minio:RELEASE.2025-09-07T16-13-09Z
 #   langfuse/langfuse:4
 #   langfuse/langfuse-worker:4
+#
+# 密钥从同目录 .env 读取（参考 .env.example）：
+#   cp .env.example .env 后按注释生成并替换，切勿把真实 .env 提交到 git
 
 name: langfuse
 
@@ -15,7 +18,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: langfuse
-      POSTGRES_PASSWORD: langfuse_local
+      POSTGRES_PASSWORD: ${LANGFUSE_DB_PASSWORD:-langfuse_local}
       POSTGRES_DB: langfuse
     volumes:
       - langfuse_pg:/var/lib/postgresql/data
@@ -30,11 +33,11 @@ services:
     container_name: langfuse-redis
     restart: unless-stopped
     # v4 worker 的 BullMQ 队列要求带密码的 Redis（REDIS_HOST/PORT/AUTH）
-    command: redis-server --appendonly yes --requirepass langfuse_redis_pass --maxmemory-policy noeviction
+    command: redis-server --appendonly yes --requirepass ${LANGFUSE_REDIS_PASSWORD:-langfuse_redis_pass} --maxmemory-policy noeviction
     volumes:
       - langfuse_redis:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "langfuse_redis_pass", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${LANGFUSE_REDIS_PASSWORD:-langfuse_redis_pass}", "ping"]
       interval: 5s
       timeout: 5s
       retries: 12
@@ -45,7 +48,7 @@ services:
     restart: unless-stopped
     environment:
       CLICKHOUSE_USER: langfuse
-      CLICKHOUSE_PASSWORD: langfuse_local
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-langfuse_local}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
     volumes:
       - langfuse_ch:/var/lib/clickhouse
@@ -64,8 +67,8 @@ services:
     restart: unless-stopped
     command: server /data --address ":9000" --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minio_root
-      MINIO_ROOT_PASSWORD: minio_root_pass_123
+      MINIO_ROOT_USER: ${LANGFUSE_MINIO_USER:-minio_root}
+      MINIO_ROOT_PASSWORD: ${LANGFUSE_MINIO_PASSWORD:-minio_root_pass_123}
     volumes:
       - langfuse_minio:/data
     ports:
@@ -92,25 +95,29 @@ services:
       langfuse-minio:
         condition: service_healthy
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment: &langfuse-env
       HOSTNAME: "0.0.0.0"  # Next standalone 绑定全部网卡含 loopback；否则被 Docker 注入的容器ID 占用，容器内 healthcheck 连接被拒
       NODE_ENV: production
       NEXTAUTH_URL: http://localhost:3000
-      NEXTAUTH_SECRET: e233e40109b8807d5efaa7016768b4c3f549833b630cbc3e8e0610a163fa2c44
-      SALT: f64719cf90e601e2f9759d16b32c227d
-      ENCRYPTION_KEY: 97560e60234611c0df2775d0490ce5b20998f01ede12c5ad4fce04b108b15007
+      # 三个加密密钥必须由 .env 提供，禁止把明文写进仓库
+      # NEXTAUTH_SECRET: openssl rand -base64 32
+      # ENCRYPTION_KEY: openssl rand -hex 32（64 位十六进制）
+      # SALT:           openssl rand -hex 16
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:?set in langfuse/.env}
+      SALT: ${LANGFUSE_SALT:?set in langfuse/.env}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:?set in langfuse/.env}
       TELEMETRY_ENABLED: "false"
-      DATABASE_URL: postgresql://langfuse:langfuse_local@langfuse-db:5432/langfuse
+      DATABASE_URL: postgresql://langfuse:${LANGFUSE_DB_PASSWORD:-langfuse_local}@langfuse-db:5432/langfuse
       # Redis：v4 统一用 HOST/PORT/AUTH（worker 的 BullMQ 队列不读 REDIS_URL）
       REDIS_HOST: langfuse-redis
       REDIS_PORT: "6379"
-      REDIS_AUTH: langfuse_redis_pass
+      REDIS_AUTH: ${LANGFUSE_REDIS_PASSWORD:-langfuse_redis_pass}
       REDIS_TLS_ENABLED: "false"
       LANGFUSE_BULLMQ_SKIP_REDIS_VERSION_CHECK: "true"  # 镜像是 redis 8.4，跳过 7.x 版本校验
       CLICKHOUSE_URL: http://langfuse-clickhouse:8123
       CLICKHOUSE_USER: langfuse
-      CLICKHOUSE_PASSWORD: langfuse_local
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-langfuse_local}
       CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
       CLICKHOUSE_CLUSTER_ENABLED: "false"  # 单机部署：普通 MergeTree，不需要 ZooKeeper/Keeper
       CLICKHOUSE_CLUSTER_NAME: default
@@ -118,16 +125,16 @@ services:
       LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
       LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
       LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
-      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio_root
-      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: minio_root_pass_123
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_USER:-minio_root}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_PASSWORD:-minio_root_pass_123}
       LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
       LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
       LANGFUSE_S3_BATCH_EXPORT_ENABLED: "false"  # demo 不启用批量导出
       LANGFUSE_S3_BATCH_EXPORT_ENDPOINT: http://langfuse-minio:9000
       LANGFUSE_S3_BATCH_EXPORT_BUCKET: langfuse-batch
       LANGFUSE_S3_BATCH_EXPORT_REGION: auto
-      LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID: minio_root
-      LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY: minio_root_pass_123
+      LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID: ${LANGFUSE_MINIO_USER:-minio_root}
+      LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_PASSWORD:-minio_root_pass_123}
       LANGFUSE_S3_BATCH_EXPORT_PREFIX: batches/
       LANGFUSE_S3_BATCH_EXPORT_FORCE_PATH_STYLE: "true"
       # media：external 为浏览器预签名地址（宿主映射 9002），internal 为容器内地址
@@ -135,8 +142,8 @@ services:
       LANGFUSE_S3_MEDIA_UPLOAD_INTERNAL_ENDPOINT: http://langfuse-minio:9000
       LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse-media
       LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
-      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: minio_root
-      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: minio_root_pass_123
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_USER:-minio_root}
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_PASSWORD:-minio_root_pass_123}
       LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: media/
       LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
       # 首次启动自动初始化（免 UI 手动配置；v4 变量名 ORG_*，非 ORGANIZATION_*）
@@ -144,11 +151,11 @@ services:
       LANGFUSE_INIT_ORG_NAME: FulinAI
       LANGFUSE_INIT_PROJECT_ID: fulin-project
       LANGFUSE_INIT_PROJECT_NAME: fulinai
-      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-fulin-local
-      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-fulin-local-6f3a9c821b74e5d0a1f2
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-pk-lf-fulin-local}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:?set in langfuse/.env}
       LANGFUSE_INIT_USER_NAME: Fulin Admin
-      LANGFUSE_INIT_USER_EMAIL: admin@fulin.local
-      LANGFUSE_INIT_USER_PASSWORD: Fulin#68dc5294
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-admin@fulin.local}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:?set in langfuse/.env}
     healthcheck:
       # 用 127.0.0.1 而非 localhost：busybox wget 的 localhost 优先解析到 IPv6 ::1，而 Next standalone 仅监听 IPv4，会误报 unhealthy
       test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/api/public/health"]

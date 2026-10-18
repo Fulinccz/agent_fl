@@ -2,7 +2,6 @@ import json
 import logging
 import os
 import sys
-import time
 import uuid
 from contextvars import ContextVar
 from typing import Optional, Dict, Any

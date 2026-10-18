@@ -64,6 +64,7 @@ function App() {
     isStreaming,
     activeAgents,
     elapsed,
+    thoughts,
     startStream,
     startUpload,
     clearOutput
@@ -358,6 +359,14 @@ function App() {
                 )}
               </div>
             </div>
+            {thoughts.length > 0 && (
+              <details className="thought-panel">
+                <summary>思考过程（{thoughts.length}）</summary>
+                {thoughts.map((t, i) => (
+                  <p key={i} className="thought-item">{t}</p>
+                ))}
+              </details>
+            )}
             {(isStreaming || score || suggestions || polished) && (
               <div className="pipeline-bar">
                 {PIPELINE_STEPS

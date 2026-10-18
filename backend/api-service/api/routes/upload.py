@@ -85,6 +85,8 @@ async def upload_file_stream(
 
     # 文件类型与大小校验
     MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+    CHUNK_SIZE = 1024 * 1024  # 1MB 分块，内存占用与文件大小无关
+    MAGIC_PREFIX_SIZE = 512  # 魔数只看文件头，保留前缀即可
 
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in ALL_MULTIMODAL_EXTS:
@@ -93,30 +95,14 @@ async def upload_file_stream(
             content={"error": f"不支持的文件类型：{ext}，支持文档/图片/音频：{', '.join(sorted(ALL_MULTIMODAL_EXTS))}"},
         )
 
-    # 先看声明长度，避免超大文件完整读入内存后才拒绝
+    # 声明长度超限直接拒绝（multipart 编码会有少量开销，留 1KB 余量）
     declared = request.headers.get("content-length")
-    if declared and int(declared) > MAX_FILE_SIZE * 2:
-        return JSONResponse(status_code=400, content={"error": "上传内容过大，最大允许 10MB"})
-
-    content = await file.read()
-    if len(content) > MAX_FILE_SIZE:
-        return JSONResponse(
-            status_code=400,
-            content={"error": f"文件过大（{len(content)//1024//1024}MB），最大允许 10MB"},
-        )
-
-    # 魔数校验：防改扩展名伪装
-    magic = check_file_magic(content, file.filename or "")
-    if not magic.allowed:
-        return JSONResponse(status_code=magic.code, content={"error": magic.reason})
-
-    # 用户补充要求 / JD 合规校验
-    query = (query or "").strip()
-    jd = (jd or "").strip()
-    for kind, text in (("text", query), ("jd", jd)):
-        result_check = check_text(text, kind)
-        if not result_check.allowed:
-            return JSONResponse(status_code=result_check.code, content={"error": result_check.reason})
+    if declared:
+        try:
+            if int(declared) > MAX_FILE_SIZE + 1024:
+                return JSONResponse(status_code=413, content={"error": "上传内容过大，最大允许 10MB"})
+        except ValueError:
+            return JSONResponse(status_code=400, content={"error": "非法的 Content-Length 头"})
 
     try:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -126,10 +112,45 @@ async def upload_file_stream(
         filename = f"{timestamp}_{safe_name}"
         file_path = os.path.join(UPLOAD_DIR, filename)
 
+        # 分块落盘 + 累计硬限：即使客户端不发 Content-Length 也不会被无限读入内存/磁盘
+        total_size = 0
+        magic_prefix = b""
         with open(file_path, "wb") as buffer:
-            buffer.write(content)
+            while True:
+                chunk = await file.read(CHUNK_SIZE)
+                if not chunk:
+                    break
+                total_size += len(chunk)
+                if total_size > MAX_FILE_SIZE:
+                    buffer.close()
+                    _cleanup_file(file_path)
+                    file_path = None
+                    return JSONResponse(
+                        status_code=413,
+                        content={"error": "文件过大，最大允许 10MB"},
+                    )
+                if len(magic_prefix) < MAGIC_PREFIX_SIZE:
+                    magic_prefix += chunk[:MAGIC_PREFIX_SIZE - len(magic_prefix)]
+                buffer.write(chunk)
 
-        logger.info(f"[{call_time}] File uploaded: {file_path}")
+        logger.info(f"[{call_time}] File uploaded: {file_path} ({total_size} bytes)")
+
+        # 魔数校验：防改扩展名伪装（只需文件头前缀）
+        magic = check_file_magic(magic_prefix, file.filename or "")
+        if not magic.allowed:
+            _cleanup_file(file_path)
+            file_path = None
+            return JSONResponse(status_code=magic.code, content={"error": magic.reason})
+
+        # 用户补充要求 / JD 合规校验
+        query = (query or "").strip()
+        jd = (jd or "").strip()
+        for kind, text in (("text", query), ("jd", jd)):
+            result_check = check_text(text, kind)
+            if not result_check.allowed:
+                _cleanup_file(file_path)
+                file_path = None
+                return JSONResponse(status_code=result_check.code, content={"error": result_check.reason})
 
         # 统一多模态解析。OCR/STT/文档解析为 CPU 密集阻塞任务，放入线程池避免卡事件循环
         try:

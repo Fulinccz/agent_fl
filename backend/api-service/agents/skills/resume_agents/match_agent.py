@@ -94,9 +94,10 @@ class JDMatchAgent:
     def _parse_match_result(self, result: str) -> Dict[str, Any]:
         """解析匹配结果"""
         try:
-            match = re.search(r'\{.*\}', result, re.DOTALL)
-            if match:
-                parsed = json.loads(match.group())
+            from services.json_utils import extract_json_object
+            json_str = extract_json_object(result)
+            if json_str:
+                parsed = json.loads(json_str)
                 # 归一化 suggestions：兼容字符串数组与对象数组两种返回
                 raw_suggestions = parsed.get("suggestions")
                 if isinstance(raw_suggestions, list):
@@ -217,7 +218,7 @@ class JDMatchAgent:
                     "priority": len(suggestions) + 1,
                     "category": "专业度",
                     "suggestion": f"「{quoted}」以弱动词开头，建议替换为体现主导性的表述",
-                    "example": f"改写为：主导 / 设计 / 落地 + 具体成果"
+                    "example": "改写为：主导 / 设计 / 落地 + 具体成果"
                 })
 
         # 4) 完整性弱：内容最单薄的语句

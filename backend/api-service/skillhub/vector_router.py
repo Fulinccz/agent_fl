@@ -67,7 +67,10 @@ class VectorSkillRouter:
 
         candidates = []
         for r in results:
-            score = r.get("distance", 0)
+            # vector_store 返回的是余弦距离（0=完全相同，越大越不相似），
+            # 这里还原为相似度（越大越相似）再与阈值比较
+            distance = r.get("distance", 1.0)
+            score = max(0.0, min(1.0, 1.0 - distance))
             if score < self.similarity_threshold:
                 continue
 

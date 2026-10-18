@@ -94,7 +94,10 @@ class TestJudgeParse:
 class TestJudgeOutput:
     def test_judge_success(self):
         case = EvalCase(id="1", category="resume_polish", input="简历")
-        judge_fn = lambda p: '```json\n{"correctness":4,"relevance":4,"has_hallucination":false,"reason":"良好"}\n```'
+
+        def judge_fn(p):
+            return '```json\n{"correctness":4,"relevance":4,"has_hallucination":false,"reason":"良好"}\n```'
+
         s = judge_output("输出", case, judge_fn=judge_fn)
         assert s.available and s.correctness == 4 and s.relevance == 4
         assert s.has_hallucination is False
@@ -118,7 +121,9 @@ class TestRunner:
     def test_aggregates_metrics(self):
         ds = EvalDataset([_make_case("a"), _make_case("b")])
         # 规则全命中输出；裁判固定 4 分、无幻觉
-        judge_fn = lambda p: '{"correctness":4,"relevance":4,"has_hallucination":false,"reason":"ok"}'
+        def judge_fn(p):
+            return '{"correctness":4,"relevance":4,"has_hallucination":false,"reason":"ok"}'
+
         fns = {"local": lambda prompt: "技能：Java 项目经历很丰富" * 2}
 
         report = run_evaluation(ds, ["local"], generate_fns=fns, judge_fn=judge_fn)
@@ -277,7 +282,10 @@ class TestLatencyTokenAccounting:
 class TestEvaluationWarnings:
     def test_self_judge_warning(self):
         ds = EvalDataset([_make_case("a")])
-        judge_fn = lambda p: '{"correctness":4,"relevance":4,"has_hallucination":false,"reason":"ok"}'
+
+        def judge_fn(p):
+            return '{"correctness":4,"relevance":4,"has_hallucination":false,"reason":"ok"}'
+
         fns = {"deepseek": lambda prompt: "技能：Java 项目"}
         report = run_evaluation(
             ds, ["deepseek"], generate_fns=fns,
@@ -292,7 +300,10 @@ class TestEvaluationWarnings:
             "good": lambda prompt: "技能：Java 项目",
             "bad": lambda prompt: (_ for _ in ()).throw(RuntimeError("model down")),
         }
-        judge_fn = lambda p: '{"correctness":4,"relevance":4,"has_hallucination":false,"reason":"ok"}'
+
+        def judge_fn(p):
+            return '{"correctness":4,"relevance":4,"has_hallucination":false,"reason":"ok"}'
+
         report = run_evaluation(ds, ["good", "bad"], generate_fns=fns, judge_fn=judge_fn)
         assert report["providers"]["good"]["judged_n"] == 1
         assert report["providers"]["bad"]["judged_n"] == 0

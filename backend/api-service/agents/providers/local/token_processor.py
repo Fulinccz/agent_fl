@@ -4,7 +4,7 @@ Token 处理器
 """
 
 from __future__ import annotations
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List
 from .utils import filter_think_content
 
 

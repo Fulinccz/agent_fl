@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from services import rate_limit
-from services.rate_limit import check_rate_limit, reset_rate_limits, LIMITS
+from services.rate_limit import check_rate_limit, reset_rate_limits
 
 
 @pytest.fixture(autouse=True)
@@ -14,10 +14,11 @@ def _reset():
     reset_rate_limits()
 
 
-def _make_request(ip="10.0.0.1", path="/api/resume/optimize/stream"):
+def _make_request(ip="10.0.0.1", path="/api/resume/optimize/stream", xff=None):
     req = MagicMock()
     req.client.host = ip
     req.url.path = path
+    req.headers = {"x-forwarded-for": xff} if xff else {}
     return req
 
 
@@ -78,9 +79,37 @@ def test_window_expiry_allows_again(monkeypatch):
 def test_unknown_client_ip_fallback(monkeypatch):
     req = MagicMock()
     req.client = None
+    req.headers = {}
     req.url.path = "/api/resume/optimize/stream"
     allowed, _, _ = check_rate_limit(req, "/api/resume/optimize/stream")
     assert allowed
+
+
+def test_xff_first_hop_used_as_client_ip():
+    """经代理时按 X-Forwarded-For 第一个地址区分客户端"""
+    req_a = _make_request(ip="172.20.0.3", xff="203.0.113.1, 172.20.0.3")
+    req_b = _make_request(ip="172.20.0.3", xff="203.0.113.2, 172.20.0.3")
+    for _ in range(10):
+        assert check_rate_limit(req_a, "/api/resume/optimize/stream")[0]
+    assert not check_rate_limit(req_a, "/api/resume/optimize/stream")[0]
+    # TCP 对端相同但 XFF 不同 → 独立桶，仍放行
+    assert check_rate_limit(req_b, "/api/resume/optimize/stream")[0]
+
+
+def test_stale_buckets_evicted(monkeypatch):
+    """过期桶应被惰性清理，避免内存随 IP 数无界增长"""
+    t = [1000.0]
+    monkeypatch.setattr(rate_limit.time, "monotonic", lambda: t[0])
+
+    req = _make_request(ip="10.0.0.99")
+    check_rate_limit(req, "/api/resume/optimize/stream")
+    assert any("10.0.0.99" in k for k in rate_limit._buckets)
+
+    # 越过淘汰间隔 + TTL 后再次请求，触发清理
+    t[0] += 400
+    other = _make_request(ip="10.0.0.100")
+    check_rate_limit(other, "/api/resume/optimize/stream")
+    assert not any("10.0.0.99" in k for k in rate_limit._buckets)
 
 
 def test_default_limit_for_unmapped_path():

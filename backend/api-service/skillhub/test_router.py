@@ -3,7 +3,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from skillhub import SkillRouterAgent, RouteResult
+from skillhub import SkillRouterAgent
 from skillhub.keyword_matcher import KeywordMatcher
 from skillhub.vector_router import VectorSkillRouter
 

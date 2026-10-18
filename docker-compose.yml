@@ -1,3 +1,5 @@
+name: fulinai
+
 services:
   # MySQL - 数据存储
   mysql:
@@ -10,7 +12,7 @@ services:
       MYSQL_CHARACTER_SET_SERVER: utf8mb4
       MYSQL_COLLATION_SERVER: utf8mb4_unicode_ci
     ports:
-      - "3306:3306"
+      - "127.0.0.1:3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
       - ./raw_data/sql:/docker-entrypoint-initdb.d:ro
@@ -48,7 +50,7 @@ services:
     container_name: fulin-redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     command: >
@@ -82,12 +84,14 @@ services:
     networks:
       - fulin-network
 
+  # Flink 为离线批处理 ETL，默认不启动；需要时：docker compose --profile data up
   flink-jobmanager:
     image: flink:2.0.0-scala_2.12-java21
     container_name: fulin-flink-jobmanager
     restart: unless-stopped
+    profiles: ["data"]
     ports:
-      - "8081:8081"
+      - "127.0.0.1:8081:8081"
     environment:
       - JOB_MANAGER_RPC_ADDRESS=flink-jobmanager
       - JOB_MANAGER_HEAP_SIZE=512m
@@ -118,6 +122,7 @@ services:
     image: flink:2.0.0-scala_2.12-java21
     container_name: fulin-flink-taskmanager
     restart: unless-stopped
+    profiles: ["data"]
     environment:
       - JOB_MANAGER_RPC_ADDRESS=flink-jobmanager
       - TASK_MANAGER_HEAP_SIZE=1g
@@ -141,13 +146,13 @@ services:
     networks:
       - fulin-network
 
-  # Frontend
+  # Frontend（nginx-unprivileged 容器内监听 8080）
   frontend:
     build:
       context: ./frontend
       dockerfile: dockerfile
     ports:
-      - "80:80"
+      - "80:8080"
     depends_on:
       go-service:
         condition: service_healthy
@@ -171,13 +176,15 @@ services:
       context: ./backend/api-gateway
       dockerfile: dockerfile
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     depends_on:
       python-service:
         condition: service_healthy
     environment:
       - PYTHON_BASEURL=http://python-service:8000
       - GIN_MODE=release
+      - GATEWAY_RATE_LIMIT=${GATEWAY_RATE_LIMIT:-50}
+      - GATEWAY_RATE_BURST=${GATEWAY_RATE_BURST:-100}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - MYSQL_HOST=mysql
@@ -211,13 +218,21 @@ services:
       context: ./backend/api-service
       dockerfile: dockerfile
     volumes:
-      - ./ai/models:/app/ai/models
+      - ./ai/models:/app/ai/models:ro
       - ./uploads:/app/uploads
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=INFO
+      # Demo 默认关闭鉴权（前端无登录入口）；生产部署必须 AUTH_ENABLED=true 并配置 JWT_SECRET
+      - AUTH_ENABLED=${AUTH_ENABLED:-false}
+      - JWT_SECRET=${JWT_SECRET:-}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      # 主链路（JDBC→Redis 批处理 + 在线服务）不依赖 Kafka，就绪探针默认不检查
+      - KAFKA_ENABLED=${KAFKA_ENABLED:-false}
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD:-fulin123456}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - MYSQL_HOST=mysql
@@ -247,16 +262,19 @@ services:
     networks:
       - fulin-network
 
+  # Kafka 当前为预留组件（数据管道为 JDBC→Redis 批处理，不经过 Kafka）
+  # 默认不启动；需要时：docker compose --profile kafka up
   # Zookeeper - Kafka 依赖
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
     container_name: fulin-zookeeper
     restart: unless-stopped
+    profiles: ["kafka"]
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
     ports:
-      - "2181:2181"
+      - "127.0.0.1:2181:2181"
     healthcheck:
       test: ["CMD", "bash", "-c", "echo 'ruok' | nc localhost 2181"]
       interval: 10s
@@ -279,17 +297,18 @@ services:
     networks:
       - fulin-network
 
-  # Kafka - 消息队列
+  # Kafka - 消息队列（预留，profile=kafka）
   kafka:
     image: confluentinc/cp-kafka:7.5.0
     container_name: fulin-kafka
     restart: unless-stopped
+    profiles: ["kafka"]
     depends_on:
       zookeeper:
         condition: service_healthy
     ports:
-      - "9092:9092"
-      - "29092:29092"
+      - "127.0.0.1:9092:9092"
+      - "127.0.0.1:29092:29092"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
@@ -323,16 +342,17 @@ services:
     networks:
       - fulin-network
 
-  # Kafka UI - 可视化管理（可选）
+  # Kafka UI - 可视化管理（profile=kafka）
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: fulin-kafka-ui
     restart: unless-stopped
+    profiles: ["kafka"]
     depends_on:
       kafka:
         condition: service_healthy
     ports:
-      - "8082:8080"
+      - "127.0.0.1:8082:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
@@ -350,12 +370,39 @@ services:
     networks:
       - fulin-network
 
+  # Neo4j - 知识图谱（可选，仅 RAG 图谱检索需要）
+  # 默认不启动；需要时：docker compose --profile graph up
+  neo4j:
+    image: neo4j:5-community
+    container_name: fulin-neo4j
+    restart: unless-stopped
+    profiles: ["graph"]
+    ports:
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-fulin123456}
+    volumes:
+      - neo4j_data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+    networks:
+      - fulin-network
+
 volumes:
   mysql_data:
     driver: local
   redis_data:
     driver: local
-  kafka_data:
+  neo4j_data:
     driver: local
 
 networks:
@@ -363,4 +410,5 @@ networks:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.20.0.0/16
+        # 避开本机常见网段：langfuse_default 已占用 172.20.0.0/16
+        - subnet: 172.28.0.0/16

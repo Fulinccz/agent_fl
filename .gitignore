@@ -12,7 +12,6 @@ dist/
 *.dll
 *.so
 *.dylib
-go.sum
 
 # Environment files
 .env
@@ -26,6 +25,17 @@ go.sum
 ai/
 distill_first_run/
 uploads/
+
+# Knowledge base sources (locally maintained, rebuild via manage_vector_db.py)
+backend/api-service/data/resume_knowledge/
+
+# Vector store artifacts (derived from knowledge/skill sources)
+backend/api-service/data/vector_db/
+backend/api-service/data/skill_vector_db/
+
+# Python virtualenv & test cache (explicit; some dirs also self-ignore)
+.venv/
+.pytest_cache/
 
 # System files
 .DS_Store
@@ -71,6 +81,9 @@ htmlcov/
 .nyc_output/
 .coverage
 .coverage.*
+# CI 本地产物（与 CI 工作流输出同名，防止误提交）
+coverage.xml
+test-results.xml
 
 # Database
 *.db

@@ -1,0 +1,20 @@
+# 版本控制
+.git
+.gitignore
+
+# 测试（多阶段构建仅编译 cmd/server）
+tests
+
+# 文档
+*.md
+
+# 编辑器与系统文件
+.idea
+.vscode
+.DS_Store
+
+# 编译产物
+*.exe
+*.test
+*.out
+tmp/

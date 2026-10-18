@@ -106,11 +106,11 @@ class LLMIntentClassifier:
                 update_current_generation(output=result_text[:300])
 
             import json
-            import re
+            from services.json_utils import extract_json_object
 
-            json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
-            if json_match:
-                result = json.loads(json_match.group())
+            json_str = extract_json_object(result_text)
+            if json_str:
+                result = json.loads(json_str)
             else:
                 result = {"intent": "chat-general", "confidence": 0.5, "reason": "解析失败", "params": {}}
 

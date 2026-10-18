@@ -123,35 +123,9 @@ class ResumeScoreAgent:
 
     @staticmethod
     def _extract_json_object(text: str) -> Optional[str]:
-        """提取文本中第一个平衡的 JSON 对象（字符串感知，支持任意嵌套深度）
-
-        旧正则只支持一层嵌套，analysis 变为 {assessment, suggestion} 对象后
-        需要三层嵌套（外层→analysis→条目），且建议文本中可能含花括号，故改用扫描。
-        """
-        start = text.find('{')
-        if start < 0:
-            return None
-        depth = 0
-        in_str = False
-        escape = False
-        for i in range(start, len(text)):
-            c = text[i]
-            if in_str:
-                if escape:
-                    escape = False
-                elif c == '\\':
-                    escape = True
-                elif c == '"':
-                    in_str = False
-            elif c == '"':
-                in_str = True
-            elif c == '{':
-                depth += 1
-            elif c == '}':
-                depth -= 1
-                if depth == 0:
-                    return text[start:i + 1]
-        return None
+        """提取文本中第一个平衡的 JSON 对象（薄包装，复用 services.json_utils）"""
+        from services.json_utils import extract_json_object
+        return extract_json_object(text)
 
     def _parse_scores(self, result: str) -> Dict[str, int]:
         """解析评分结果"""
@@ -303,15 +277,25 @@ class ResumeScoreAgent:
         return {"assessment": "该维度明显不足，需要重点改进。", "suggestion": "建议重写相关内容，补充具体项目、数据与成果。"}
 
     def _get_rating(self, score: float) -> str:
-        if score >= 90: return "优秀"
-        elif score >= 80: return "良好"
-        elif score >= 70: return "中等"
-        elif score >= 60: return "及格"
-        else: return "需改进"
+        if score >= 90:
+            return "优秀"
+        elif score >= 80:
+            return "良好"
+        elif score >= 70:
+            return "中等"
+        elif score >= 60:
+            return "及格"
+        else:
+            return "需改进"
 
     def _get_description(self, score: float) -> str:
-        if score >= 90: return "简历质量很高，专业度强"
-        elif score >= 80: return "简历整体不错，有小部分可以优化"
-        elif score >= 70: return "简历基本合格，建议按建议改进"
-        elif score >= 60: return "简历需要较多改进"
-        else: return "简历问题较多，建议重新梳理"
+        if score >= 90:
+            return "简历质量很高，专业度强"
+        elif score >= 80:
+            return "简历整体不错，有小部分可以优化"
+        elif score >= 70:
+            return "简历基本合格，建议按建议改进"
+        elif score >= 60:
+            return "简历需要较多改进"
+        else:
+            return "简历问题较多，建议重新梳理"

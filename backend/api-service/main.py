@@ -1,6 +1,7 @@
 import time
 import uuid
 import asyncio
+import threading
 
 from contextlib import asynccontextmanager
 
@@ -10,9 +11,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 import uvicorn
 
-# Prometheus 指标（全局定义，避免重复创建）
 from prometheus_client import Counter, Gauge, Histogram, generate_latest, CONTENT_TYPE_LATEST
 
+from api.routes import router
+from logger import get_logger, get_trace_id, set_trace_id, clear_trace_id
+from services.config import AppSettings
+from services.rate_limit import check_global_rate_limit
+from middleware.auth import AuthMiddleware
+
+logger = get_logger(__name__)
+
+# Prometheus 指标（全局定义，避免重复创建）
 REQUEST_COUNT = Counter(
     "http_requests_total",
     "Total HTTP requests",
@@ -29,19 +38,16 @@ ACTIVE_REQUESTS = Gauge(
     ["method"]
 )
 
-from api.routes import router
-from logger import get_logger, get_trace_id, set_trace_id, clear_trace_id
-from services.config import AppSettings
-from services.rate_limit import check_global_rate_limit
-from middleware.auth import AuthMiddleware
-
-logger = get_logger(__name__)
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config = AppSettings.load()
-    logger.info("api-service starting, environment=%s", config.env)
+    # fail-fast：ENV=prod 或开启鉴权时，弱密钥配置直接拒绝启动
+    config.validate_security()
+    logger.info(
+        "api-service starting, environment=%s, auth_enabled=%s",
+        config.env, config.auth_enabled,
+    )
 
     # 初始化 skill 系统
     try:
@@ -52,7 +58,6 @@ async def lifespan(app: FastAPI):
         logger.error("Failed to initialize skill system: %s", e)
 
     # 后台预加载 LLM 模型（避免第一次请求阻塞）
-    import threading
     try:
         from agents.llm import preload_model
         thread = threading.Thread(target=preload_model, daemon=True)
@@ -106,9 +111,9 @@ app = FastAPI(
 
 ### 认证说明
 
-- 大部分接口需要 `Authorization: Bearer <token>` 头部
-- 通过 `/api/v1/auth/login` 获取 Token
-- 白名单路径：`/health`, `/ready`, `/metrics`, `/docs`, `/auth/login`
+- 鉴权由 `AUTH_ENABLED` 控制：Demo 默认关闭；开启后除白名单外的接口均需 `Authorization: Bearer <token>`
+- 通过 `/api/auth/login` 获取 Token
+- 白名单路径（精确匹配）：`/health`, `/ready`, `/metrics`, `/docs`, `/openapi.json`, `/api/auth/login`
 
 ### 错误格式
 
@@ -136,12 +141,14 @@ app = FastAPI(
     openapi_url="/openapi.json",
 )
 
-# CORS 配置（生产环境通过 CORS_ORIGINS 环境变量设置白名单）
-_cors_origins = AppSettings.load().cors_origins
+# CORS 配置（生产环境必须通过 CORS_ORIGINS 设置显式白名单）
+_cors_settings = AppSettings.load()
+# 浏览器安全规则：Access-Control-Allow-Origin=* 时不允许携带凭证
+_allow_wildcard = _cors_settings.cors_origin_list == ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_cors_origins.split(",") if _cors_origins != "*" else ["*"],
-    allow_credentials=True,
+    allow_origins=_cors_settings.cors_origin_list,
+    allow_credentials=not _allow_wildcard,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -231,12 +238,8 @@ async def trace_middleware(request: Request, call_next):
         clear_trace_id()
 
 
-_auth_middleware = AuthMiddleware(exempt_paths=[
-    "/health", "/ready", "/metrics",
-    "/docs", "/openapi.json", "/redoc",
-    "/api/v1/auth", "/api/auth",
-    "/api/chat", "/api/agent", "/api/resume", "/api/upload", "/api/skill",
-])
+# 白名单使用精确路径：仅登录端点公开，/me、/refresh 及其余业务接口均需 Token
+_auth_middleware = AuthMiddleware(exempt_paths={"/api/auth/login"})
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
@@ -345,18 +348,27 @@ async def health_check():
     "/ready",
     tags=["系统"],
     summary="服务就绪检查",
-    description="检查所有依赖服务（MySQL、Redis、Kafka）是否可用，用于 Kubernetes/Docker 就绪探针（Readiness Probe）",
+    description="检查依赖服务（MySQL、Redis；KAFKA_ENABLED=true 时含 Kafka）是否可用，用于 Kubernetes/Docker 就绪探针（Readiness Probe）",
 )
 async def readiness_check():
-    # 探针通常每 1-10s 打一次，缓存 5s 避免频繁新建 MySQL/Redis/Kafka 连接
+    # 探针通常每 1-10s 打一次，缓存 5s 避免频繁新建 MySQL/Redis 连接
     now = time.monotonic()
     cached = _readiness_cache.get("result")
     if cached is not None and now - _readiness_cache["ts"] < _READINESS_TTL_SECONDS:
         checks = cached
+    elif _readiness_lock.acquire(blocking=False):
+        # 单飞：依赖宕机时检查耗时数秒，探测间隔更短，无单飞会堆叠检查线程
+        try:
+            # 探活全是阻塞式 IO，放到线程池执行，避免卡住事件循环
+            checks = await asyncio.to_thread(_perform_readiness_checks)
+            _readiness_cache["ts"] = time.monotonic()
+            _readiness_cache["result"] = checks
+        finally:
+            _readiness_lock.release()
+    elif cached is not None:
+        checks = cached  # 检查在途：返回最近一次已知结果（允许短暂过期）
     else:
-        checks = _perform_readiness_checks()
-        _readiness_cache["ts"] = now
-        _readiness_cache["result"] = checks
+        checks = {"status": "checking"}  # 冷启动首次检查在途
 
     all_ok = all(v == "ok" for v in checks.values())
 
@@ -371,25 +383,34 @@ async def readiness_check():
 
 _READINESS_TTL_SECONDS = 5
 _readiness_cache: dict = {"ts": 0.0, "result": None}
+_readiness_lock = threading.Lock()
 
 
 def _perform_readiness_checks() -> dict:
-    """实际执行 MySQL/Redis/Kafka 探活（被 readiness 端点短缓存包装）"""
+    """实际执行 MySQL/Redis（+可选 Kafka）探活（被 readiness 端点短缓存包装）
+
+    对外只暴露 ok/error 两种状态，异常详情只写日志，避免把 DSN、内网地址等
+    内部信息通过未鉴权的 /ready 端点泄漏出去。
+    """
     checks = {}
     config = AppSettings.load()
 
-    # 检查 MySQL
+    # 检查 MySQL（connect_timeout 收紧到 2s：探针预算必须远小于探测间隔，
+    # 否则依赖宕机时单次检查 20s+，探针连环超时）
     try:
         from sqlalchemy import create_engine, text
-        engine = create_engine(config.mysql_dsn, pool_pre_ping=True)
+        engine = create_engine(
+            config.mysql_dsn, pool_pre_ping=True, connect_args={"connect_timeout": 2}
+        )
         try:
             with engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
             checks["mysql"] = "ok"
         finally:
             engine.dispose()  # 探针不持有连接池，避免每次请求累积连接
-    except Exception as e:
-        checks["mysql"] = f"error: {str(e)}"
+    except Exception:
+        logger.error("readiness: mysql check failed", exc_info=True)
+        checks["mysql"] = "error"
 
     # 检查 Redis
     try:
@@ -402,21 +423,24 @@ def _perform_readiness_checks() -> dict:
         )
         r.ping()
         checks["redis"] = "ok"
-    except Exception as e:
-        checks["redis"] = f"error: {str(e)}"
+    except Exception:
+        logger.error("readiness: redis check failed", exc_info=True)
+        checks["redis"] = "error"
 
-    # 检查 Kafka（可选）
-    try:
-        from kafka import KafkaProducer
-        producer = KafkaProducer(
-            bootstrap_servers=config.kafka_bootstrap_servers,
-            retries=1,
-            request_timeout_ms=2000
-        )
-        producer.close()
-        checks["kafka"] = "ok"
-    except Exception as e:
-        checks["kafka"] = f"error: {str(e)}"
+    # Kafka 为可选依赖（主链路是 JDBC→Redis 批处理），仅显式开启时才检查
+    if config.kafka_enabled:
+        try:
+            from kafka import KafkaProducer
+            producer = KafkaProducer(
+                bootstrap_servers=config.kafka_bootstrap_servers,
+                retries=1,
+                request_timeout_ms=2000
+            )
+            producer.close()
+            checks["kafka"] = "ok"
+        except Exception:
+            logger.error("readiness: kafka check failed", exc_info=True)
+            checks["kafka"] = "error"
 
     return checks
 

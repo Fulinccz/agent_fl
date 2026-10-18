@@ -1,6 +1,5 @@
 import pytest
-import asyncio
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import patch, AsyncMock
 
 from cache.distributed_lock import DistributedLock, distributed_lock, LockAcquireError
 

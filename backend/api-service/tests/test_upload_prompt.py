@@ -7,7 +7,6 @@ import io
 import json
 from unittest.mock import MagicMock, AsyncMock
 
-import pytest
 from fastapi import UploadFile
 
 from api.routes import upload as upload_route

@@ -153,7 +153,7 @@ def generate_knowledge_base():
     with open(output_file, 'w', encoding='utf-8') as f:
         f.write('\n'.join(content))
     
-    print(f"✅ 知识库文档生成成功！")
+    print("✅ 知识库文档生成成功！")
     print(f"   文件路径: {output_file}")
     print(f"   总样本数: {len(data)} 条")
     print(f"   - 简历优化: {len(resume_samples)} 条")

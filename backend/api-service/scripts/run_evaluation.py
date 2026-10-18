@@ -23,8 +23,8 @@ API_ROOT = Path(__file__).resolve().parents[1]
 if str(API_ROOT) not in sys.path:
     sys.path.insert(0, str(API_ROOT))
 
-from evaluation.dataset import EvalDataset
-from evaluation.runner import run_evaluation, save_report, compare_to_baseline
+from evaluation.dataset import EvalDataset  # noqa: E402
+from evaluation.runner import run_evaluation, save_report, compare_to_baseline  # noqa: E402
 
 
 def _print_markdown(report: dict) -> None:

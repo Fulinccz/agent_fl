@@ -230,7 +230,6 @@ def detect_multiple_intents(user_input: str) -> List[str]:
     from skillhub.keyword_matcher import KeywordMatcher
 
     hits: List[str] = []
-    matcher = KeywordMatcher()
     for skill_name, keywords in KeywordMatcher.SKILL_KEYWORDS.items():
         for kw in keywords:
             if kw.lower() in user_input.lower():

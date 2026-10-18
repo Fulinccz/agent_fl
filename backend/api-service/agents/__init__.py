@@ -3,7 +3,8 @@
 包含三个子系统：
 - providers/   模型 Provider 抽象（local/ GGUF 与 cloud/ DeepSeek 物理隔离）
 - skills/      技能 Agent（简历评分、JD 匹配、简历润色、对话图等）
-- mas/         主从多智能体系统（意图识别 → Master 规划 → 执行器执行 → ReAct 反思）
+- mas/         主从多智能体系统（意图识别 → Master 规划 → 执行器执行（可选 ReAct 步内回路）
+               → Reflector 步后评审 → Master 控制策略）
 """
 
 from .registry import get_agent

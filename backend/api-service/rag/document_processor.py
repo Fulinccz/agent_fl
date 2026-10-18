@@ -1,8 +1,10 @@
 """
-支持 .docx 和 .pdf 格式，提取技能栏和项目描述
+1) ResumeParser：支持 .docx/.doc/.pdf 简历解析，提取技能栏和项目描述
+2) DocumentProcessor：知识库文档切片器，按 markdown 标题切 chunk 供向量入库
 """
 
 import re
+from dataclasses import dataclass
 from typing import Dict, Optional, List, Any
 from pathlib import Path
 import logging
@@ -50,7 +52,7 @@ class ResumeParser:
         if file_extension == '.docx':
             import zipfile
             if not zipfile.is_zipfile(str(file_path)):
-                logger.warning(f"文件不是真正的 .docx 格式，尝试作为 .doc 处理")
+                logger.warning("文件不是真正的 .docx 格式，尝试作为 .doc 处理")
                 file_extension = '.doc'
         
         logger.info(f"文件格式：{file_extension}")
@@ -125,7 +127,7 @@ class ResumeParser:
         try:
             import win32com.client
             
-            logger.info(f"使用 Word COM 接口解析 .doc 文件")
+            logger.info("使用 Word COM 接口解析 .doc 文件")
             
             word = win32com.client.Dispatch("Word.Application")
             word.Visible = False
@@ -289,3 +291,135 @@ def parse_resume(file_path: str) -> Dict[str, Optional[str]]:
     """便捷函数，解析简历文件"""
     parser = ResumeParser()
     return parser.parse_file(file_path)
+
+
+# ---------------------------------------------------------------------------
+# 知识库文档切片
+# ---------------------------------------------------------------------------
+
+# markdown 标题行（# / ## / ###）作为知识条目的天然边界
+_HEADING_RE = re.compile(r"^(#{1,3})\s+(.*\S)\s*$")
+
+
+@dataclass
+class DocumentChunk:
+    """知识库切片，入库向量库的最小单元"""
+    chunk_id: str
+    content: str
+    metadata: Dict[str, Any]
+
+
+class DocumentProcessor:
+    """知识库文档切片器。
+
+    切片策略：
+    - 按 markdown 标题（# ~ ###）切分章节，标题行保留在 chunk 正文中，
+      标题文本写入 metadata.section，检索时可展示来源小节
+    - 相邻小节贪心合并，单个 chunk 不超过 chunk_size 字
+    - 单个章节超长时复用 split_text 按段落/句子边界二次切分
+    - 无标题的纯文本直接按 split_text 切块
+    """
+
+    SUPPORTED_EXTENSIONS = (".md", ".txt")
+
+    def __init__(self, chunk_size: int = 400):
+        self.chunk_size = chunk_size
+
+    def process_directory(self, dir_path: str) -> List[DocumentChunk]:
+        """处理目录下全部支持格式的知识文件，按文件名排序保证结果稳定"""
+        dir_path = Path(dir_path)
+        if not dir_path.is_dir():
+            logger.warning(f"知识目录不存在：{dir_path}")
+            return []
+
+        chunks: List[DocumentChunk] = []
+        for file_path in sorted(dir_path.iterdir()):
+            if file_path.suffix.lower() not in self.SUPPORTED_EXTENSIONS:
+                if file_path.is_file():
+                    logger.info(f"跳过不支持的文件：{file_path.name}")
+                continue
+            chunks.extend(self.process_file(str(file_path)))
+
+        logger.info(f"目录切片完成：{dir_path.name} -> {len(chunks)} chunks")
+        return chunks
+
+    def process_file(self, file_path: str) -> List[DocumentChunk]:
+        """处理单个知识文件"""
+        from agents.skills.resume_agents.textutil import split_text
+
+        file_path = Path(file_path)
+        if not file_path.is_file():
+            logger.error(f"知识文件不存在：{file_path}")
+            return []
+
+        text = file_path.read_text(encoding="utf-8", errors="replace").strip()
+        if not text:
+            logger.warning(f"知识文件为空：{file_path.name}")
+            return []
+
+        stem = file_path.stem
+        bodies: List[tuple] = []  # (section_title, chunk_body)
+        buffer_title = ""
+        buffer_body = ""
+
+        def flush():
+            nonlocal buffer_title, buffer_body
+            if buffer_body.strip():
+                bodies.append((buffer_title, buffer_body.strip()))
+            buffer_title, buffer_body = "", ""
+
+        for section_title, section_body in self._split_by_headings(text):
+            if len(section_body) > self.chunk_size:
+                # 超长章节：先冲刷缓冲，再按段落/句子边界二次切分
+                flush()
+                for piece in split_text(section_body, self.chunk_size):
+                    bodies.append((section_title, piece))
+            elif buffer_body and len(buffer_body) + 1 + len(section_body) > self.chunk_size:
+                flush()
+                buffer_title, buffer_body = section_title, section_body
+            else:
+                # 相邻小节合并，标题沿用缓冲中第一个非空标题
+                if not buffer_body:
+                    buffer_title = section_title
+                buffer_body = f"{buffer_body}\n{section_body}" if buffer_body else section_body
+        flush()
+
+        chunks = [
+            DocumentChunk(
+                chunk_id=f"{stem}_{i:03d}",
+                content=body,
+                metadata={
+                    "source": file_path.name,
+                    "section": title,
+                    "chunk_index": i,
+                },
+            )
+            for i, (title, body) in enumerate(bodies)
+        ]
+        logger.info(f"文件切片完成：{file_path.name} -> {len(chunks)} chunks")
+        return chunks
+
+    def _split_by_headings(self, text: str) -> List[tuple]:
+        """按 markdown 标题切分为 (标题, 正文) 列表，标题行保留在正文中。
+
+        第一个标题之前的内容归入标题为空的起始章节；全文无标题时整体作为
+        一个空标题章节返回。
+        """
+        sections: List[tuple] = []
+        current_title = ""
+        current_lines: List[str] = []
+
+        for line in text.split("\n"):
+            match = _HEADING_RE.match(line.strip())
+            if match:
+                if current_lines:
+                    sections.append((current_title, "\n".join(current_lines).strip()))
+                current_title = match.group(2).strip()
+                current_lines = [line.strip()]
+            else:
+                current_lines.append(line)
+
+        if current_lines:
+            sections.append((current_title, "\n".join(current_lines).strip()))
+
+        return [(title, body) for title, body in sections if body]

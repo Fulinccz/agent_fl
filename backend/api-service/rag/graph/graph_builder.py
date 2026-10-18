@@ -1,5 +1,5 @@
 import re
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from logger import get_logger
 from .neo4j_client import Neo4jClient
 

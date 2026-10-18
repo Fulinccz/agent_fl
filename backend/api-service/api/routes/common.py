@@ -6,7 +6,7 @@ from __future__ import annotations
 import os
 from fastapi import HTTPException, status
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from logger import get_logger
 
 logger = get_logger(__name__)

@@ -2,10 +2,16 @@ import os
 import sys
 import io
 import argparse
+from pathlib import Path
+
+# 保证从 scripts/ 直接运行时能 import 顶层包
+API_ROOT = Path(__file__).resolve().parents[1]
+if str(API_ROOT) not in sys.path:
+    sys.path.insert(0, str(API_ROOT))
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-from rag import RAGRetriever
-from logger import get_logger
+from rag import RAGRetriever  # noqa: E402
+from logger import get_logger  # noqa: E402
 
 logger = get_logger(__name__)
 
@@ -16,15 +22,15 @@ def init_knowledge_base(force=False):
     status = result.get("status")
     if status == "exists":
         print(f"[OK] Knowledge base exists with {result.get('count', 0)} document chunks")
-        print(f"   To rebuild, use: python manage_vector_db.py init --force")
+        print("   To rebuild, use: python manage_vector_db.py init --force")
     elif status == "success":
-        print(f"[OK] Knowledge base initialized successfully!")
+        print("[OK] Knowledge base initialized successfully!")
         print(f"   - Documents added: {result.get('documents_added', 0)}")
         print(f"   - Total chunks: {result.get('total_chunks', 0)}")
         print(f"   - Collection name: {result.get('collection_name')}")
     elif status == "empty":
-        print(f"[WARN] No documents found")
-        print(f"   Please add .txt or .md files to data/resume_knowledge/ directory")
+        print("[WARN] No documents found")
+        print("   Please add .txt or .md files to data/resume_knowledge/ directory")
     else:
         print(f"[INFO] {result.get('message', status)}")
 

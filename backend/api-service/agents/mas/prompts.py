@@ -58,9 +58,9 @@ REPLANNER_USER_PROMPT = """任务规划器（Master），之前的计划执行�
 
 只输出 JSON。"""
 
-# ============ ReAct 反思提示词 ============
+# ============ 反思（Reflector）提示词 ============
 
-REFLECTOR_SYSTEM_PROMPT = """你是 ReAct 反思器（Reflector）。你负责审查执行器的执行结果，判断下一步行动。
+REFLECTOR_SYSTEM_PROMPT = """你是反思器（Reflector）。你负责评审执行器的执行结果，判断下一步行动。
 
 你可以做出的裁决：
 - continue：结果合格，继续执行下一步
@@ -72,7 +72,7 @@ REFLECTOR_SYSTEM_PROMPT = """你是 ReAct 反思器（Reflector）。你负责�
 输出要求：只输出 JSON，不要任何解释，格式如下：
 {{
     "verdict": "continue",
-    "thought": "一句话 ReAct 思考过程",
+    "thought": "一句话评审思考",
     "feedback": "如果裁决是 retry，给出具体改进建议；否则留空"
 }}
 """
@@ -88,7 +88,27 @@ REFLECTOR_USER_PROMPT = """总目标：{goal}
 历史执行轨迹：
 {trace}
 
-请给出 ReAct 裁决 JSON："""
+请给出裁决 JSON："""
+
+# ============ ReAct 执行回路提示词（步内 Thought → Action → Observation）============
+# 与反思提示词无关：ReAct 是执行器步内的推理-行动循环，Reflector 是步后评审
+
+REACT_DECIDE_SYSTEM_PROMPT = """你是简历助手。回答用户问题前，先判断是否需要查询知识库补充资料。
+
+可选行动：
+- answer：已有资料足够或问题无需资料，直接回答
+- search_knowledge：需要查询简历知识库补充资料
+
+输出要求：只输出 JSON，不要任何解释，格式如下：
+{{"thought": "一句话思考", "action": "answer 或 search_knowledge", "query": "检索词（仅 search_knowledge 时需要）"}}
+"""
+
+REACT_DECIDE_USER_PROMPT = """用户问题：{message}
+
+已有参考资料：
+{observation}
+
+请输出行动决策 JSON："""
 
 # ============ 通用对话执行器提示词 ============
 

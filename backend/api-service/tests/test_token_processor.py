@@ -78,7 +78,7 @@ class TestTokenProcessor:
         assert step1[0]["type"] == "token"
         assert step1[0]["content"] == "前缀"
 
-        step2 = processor.process_token("<think>内部思考")
+        processor.process_token("<think>内部思考")
         assert processor.in_think_tag is True
 
         step3 = processor.process_token("</think>后续内容")
@@ -150,11 +150,11 @@ class TestTokenProcessor:
 
     def test_partial_think_start_in_token(self, processor):
         """token 中包含部分 <think> 标签（标签跨 token）"""
-        outputs = processor.process_token("前半<think>")
+        processor.process_token("前半<think>")
         assert processor.in_think_tag is True
         assert processor.think_buffer == ""
 
-        outputs = processor.process_token("后半")
+        processor.process_token("后半")
         assert processor.think_buffer == "后半"
 
 

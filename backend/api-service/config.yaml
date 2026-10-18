@@ -42,8 +42,14 @@ mas:
   reflection:
     # 是否启用 LLM 反思（false 时仅用规则）
     use_llm: true
-    # 失败重试次数上限
-    max_retries: 1
+    # 单步骤重试次数上限（重试预算由编排器统一控制；与 deepseek.max_retries 不同作用域）
+    max_step_retries: 1
+  react:
+    # ReAct 步内回路（chat 执行器：无预检索上下文时先决策是否查知识库）
+    # 默认关闭：多一轮决策调用会增加对话首字延迟
+    enabled: false
+    # 步内工具调用轮数上限
+    max_tool_rounds: 1
 
 # ----------------------- RAG 检索 -----------------------
 rag:

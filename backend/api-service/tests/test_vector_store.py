@@ -2,7 +2,7 @@ import pytest
 import os
 import tempfile
 import shutil
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 import numpy as np
 
 from rag.vector_store import VectorStore

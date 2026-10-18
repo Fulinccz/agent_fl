@@ -88,11 +88,14 @@ export type ResumeEventType =
   | 'plan'
   | 'step_start'
   | 'step_result'
-  | 'reflection';
+  | 'reflection'
+  | 'thought';
 
 export interface ResumeOptimizeEvent {
   type: ResumeEventType;
   // 不同 type 对应不同负载，消费处按 type 收窄
   data?: unknown;
   message?: string;
+  // thought 事件负载（ReAct 步内思考）
+  content?: string;
 }

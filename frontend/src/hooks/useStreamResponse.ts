@@ -37,6 +37,8 @@ interface UseStreamResponseReturn {
   isStreaming: boolean;
   activeAgents: Set<string>;
   elapsed: number | null;
+  /** ReAct 步内思考过程（thought 事件按序累积） */
+  thoughts: string[];
   startStream: (request: ResumeOptimizeRequest, signal?: AbortSignal) => Promise<void>;
   startUpload: (request: UploadRequest, signal?: AbortSignal) => Promise<void>;
   clearOutput: () => void;
@@ -53,6 +55,8 @@ export function useStreamResponse(
   const [isStreaming, setIsStreaming] = useState(false);
   const [activeAgents, setActiveAgents] = useState<Set<string>>(new Set());
   const [elapsed, setElapsed] = useState<number | null>(null);
+  const [thoughts, setThoughts] = useState<string[]>([]);
+  const thoughtsRef = useRef<string[]>([]);
 
   const scoreRef = useRef<ScoreData | null>(null);
   const suggestionsRef = useRef<SuggestionsData | null>(null);
@@ -120,6 +124,16 @@ export function useStreamResponse(
         }
         break;
       }
+      case 'thought': {
+        // ReAct 步内思考：按序累积，重复内容跳过
+        const content = (event.content || '').trim();
+        if (content && thoughtsRef.current[thoughtsRef.current.length - 1] !== content) {
+          const next = [...thoughtsRef.current, content];
+          thoughtsRef.current = next;
+          setThoughts(next);
+        }
+        break;
+      }
       case 'error': {
         const msg = event.message || '服务器处理出错';
         setError(msg);
@@ -159,11 +173,13 @@ export function useStreamResponse(
     setError(null);
     setElapsed(null);
     setActiveAgents(new Set());
+    setThoughts([]);
     scoreRef.current = null;
     suggestionsRef.current = null;
     polishedRef.current = null;
     condensedRef.current = null;
     activeAgentsRef.current = new Set();
+    thoughtsRef.current = [];
   }, []);
 
   const runStream = useCallback(async (
@@ -212,6 +228,7 @@ export function useStreamResponse(
     isStreaming,
     activeAgents,
     elapsed,
+    thoughts,
     startStream,
     startUpload,
     clearOutput,

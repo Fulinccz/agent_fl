@@ -11,14 +11,14 @@
                             │ HTTP / SSE
 ┌───────────────────────────▼─────────────────────────────────┐
 │                   API Gateway (Go / Gin)                    │
-│              路由转发 · 限流熔断 · 安全认证                   │
+│         反向代理 · IP 令牌桶限流 · 安全头 · CORS              │
 └───────────────────────────┬─────────────────────────────────┘
                             │
         ┌───────────────────┼───────────────────┐
         │                   │                   │
 ┌───────▼──────┐  ┌────────▼────────┐  ┌──────▼──────┐
 │  AI Service  │  │   Data Pipeline │  │   RAG       │
-│  (FastAPI)   │  │  (Flink+Kafka)  │  │ (FAISS+Neo4j)│
+│  (FastAPI)   │  │ (Flink 批处理)  │  │ (FAISS+Neo4j)│
 │              │  │                 │  │             │
 │ · MAS 编排   │  │ · ETL 清洗      │  │ · 向量检索   │
 │ · LLM 推理   │  │ · 数据去重      │  │ · 知识图谱   │
@@ -38,10 +38,10 @@
 
 | 服务 | 技术栈 | 职责 |
 |------|--------|------|
-| **API Gateway** | Go 1.25 + Gin | 反向代理、负载均衡、限流熔断、CORS |
-| **AI Service** | Python 3.12 + FastAPI | MAS 多智能体编排、LLM 推理、简历解析优化、合规校验 |
-| **Data Pipeline** | Java 17 + Flink 2.0 | ETL、数据清洗、Redis 缓存预热 |
-| **Frontend** | React 18 + TypeScript + Vite | 用户交互界面、流式输出展示 |
+| **API Gateway** | Go 1.25 + Gin | 统一入口反向代理（httputil.ReverseProxy，SSE 即时 flush）、IP 令牌桶限流、安全响应头、CORS |
+| **AI Service** | Python 3.12 + FastAPI | MAS 多智能体编排、LLM 推理、简历解析优化、合规校验、可选 JWT 认证 |
+| **Data Pipeline** | Java 21 + Flink 2.0 | 有界批处理 ETL（MySQL JDBC → Redis）、数据清洗、缓存预热 |
+| **Frontend** | React 19 + TypeScript + Vite | 用户交互界面、流式输出展示 |
 
 ### 基础设施
 
@@ -49,9 +49,9 @@
 |------|------|
 | **MySQL 8.0** | 结构化数据持久化（职位、简历） |
 | **Redis 8.4** | 缓存、分布式锁、去重集合 |
-| **FAISS** | 向量检索（简历语义匹配） |
-| **Neo4j** | 知识图谱（技能共现、场景-技能映射） |
-| **Kafka** | 消息队列（异步解耦能力） |
+| **FAISS** | 向量检索（简历语义匹配，索引文件随仓库构建） |
+| **Neo4j** | 知识图谱（可选，`docker compose --profile graph up`，技能共现、场景-技能映射） |
+| **Kafka** | 消息队列（预留组件，当前数据管道不经过 Kafka；`--profile kafka` 启动） |
 | **Langfuse v4** | LLM 可观测性（自托管，需 MinIO + ClickHouse） |
 | **llama-server** | 本地 GGUF 模型推理服务（OpenAI 兼容 HTTP） |
 | **Docker** | 容器化部署 |
@@ -101,7 +101,7 @@ FulinAI/
 │       ├── middleware/           # JWT 认证中间件
 │       ├── cache/                # Redis 分布式锁
 │       ├── scripts/              # 脚本（知识生成, 向量库管理, 评测, 图谱导入）
-│       ├── tests/               # 测试套件（399 passed）
+│       ├── tests/                # 测试套件（459 passed；langfuse 为可选依赖，缺失时 1 个用例自动失败）
 │       └── main.py              # 服务入口
 │
 ├── frontend/                     # React + TS 前端
@@ -113,12 +113,13 @@ FulinAI/
 │
 ├── raw_data/                     # 数据采集模块
 │   ├── src/job/                  # JD 爬虫（智联/51job 并发爬取）
-│   ├── src/resume/               # 简历导入
+│   ├── src/resume/               # 简历导入（内容哈希稳定 ID，重跑幂等）
+│   ├── enrich_resumes.py         # 简历合成增强（天池公开数据 + 8 类项目模板）
 │   ├── alembic/                  # 数据库迁移
 │   └── data/                     # 数据集
 │
 ├── data/                         # 数据管道
-│   └── java-pipeline/            # Flink 实时处理
+│   └── java-pipeline/            # Flink 有界批处理 ETL（MySQL → Redis）
 │
 ├── ai/models/                    # 模型文件
 │   ├── gguf/                     # Qwen3.5-4B GGUF 量化模型
@@ -140,10 +141,12 @@ FulinAI/
 
 - Python 3.12+
 - Go 1.25+
-- Java 17+（Flink）
-- Node.js 18+（前端）
+- Java 21+（Flink）
+- Node.js 22+（前端；Vite 7 要求 Node 20.19+ / 22.12+）
 - Docker & Docker Compose
 - NVIDIA GPU（推荐，用于模型推理；CPU 部署亦可）
+
+> 简历数据来源：天池公开简历数据集，经 `raw_data/enrich_resumes.py` 做模板化合成增强（8 类项目描述模板），并非真实个人简历。
 
 ### 1. AI Service（Python FastAPI）
 
@@ -160,7 +163,7 @@ pip install -r requirements.txt
 # 配置（编辑 config.yaml：数据库、模型路径、Provider 开关）
 # 敏感凭证放 .env（API Key、数据库连接、JWT Secret）
 
-# 启动服务（默认 8080 端口）
+# 启动服务（默认 8000 端口，与网关/容器编排一致；8080 是网关端口）
 python main.py
 ```
 
@@ -178,11 +181,18 @@ go run cmd/server/main.go
 
 ### 3. 数据管道（Java / Flink）
 
+有界批处理作业：从 MySQL 读简历 → 清洗校验 → 按 resumeId 幂等写入 Redis，作业跑完自动退出。
+
 ```bash
 cd data/java-pipeline
 mvn clean package
-mvn exec:java -Dexec.mainClass="com.fulin.FlinkResumeJob"
+# shade 产物带 Main-Class，直接运行（连接参数走环境变量，见 FlinkResumeJob 顶部）
+java -jar target/resume-batch-pipeline-1.0.0.jar
+# 或提交到 Flink 集群：
+# flink run -c com.fulin.FlinkResumeJob target/resume-batch-pipeline-1.0.0.jar
 ```
+
+容器方式（仅启动 Flink 集群，作业仍需手动提交）：`docker compose --profile data up -d`。
 
 ### 4. 前端（React + Vite）
 
@@ -195,17 +205,32 @@ npm run dev  # 默认 5173 端口
 ### 5. Docker 全链路部署
 
 ```bash
-docker-compose up -d
+docker compose up -d        # 默认只起核心 5 个服务
+docker compose --profile data up -d     # 追加 Flink 集群
+docker compose --profile kafka up -d    # 追加 Kafka 预留组件
+docker compose --profile graph up -d    # 追加 Neo4j 知识图谱
 ```
 
-服务端口：MySQL 3306 · Redis 6379 · Neo4j 7474/7687 · Kafka 9092 · Go Gateway 8080 · Frontend 5173（Docker 模式 AI Service 在 Gateway 后内部 8000；本地开发 AI Service 直接 8080）
+默认启动：frontend · go-service · python-service · mysql · redis。
+
+端口（默认仅绑定宿主回环，前端 80 对外）：
+
+| 服务 | 端口 | 说明 |
+|------|------|------|
+| Frontend（nginx） | 80 → 容器 8080 | 非特权镜像，静态资源 + `/api` 反代网关 |
+| Go Gateway | 127.0.0.1:8080 | 统一入口，容器内 8080 |
+| AI Service | 127.0.0.1:8000 | 容器与本地 `python main.py` 默认均为 8000 |
+| MySQL / Redis | 127.0.0.1:3306 / 6379 | 基础设施 |
+| Vite dev server | 5173 | 仅本地 `npm run dev` |
+| Flink / Kafka UI / Neo4j | 8081 / 8082 / 7474,7687 | 对应 profile 启动后可用 |
 
 ### 6. Langfuse 可观测性（可选）
 
 ```bash
 cd langfuse
-docker-compose up -d
-# 初始化 MinIO buckets: langfuse, langfuse-batch, langfuse-media
+cp .env.example .env   # 按注释用 openssl 生成并替换三个加密密钥
+docker compose up -d
+# 首次启动自动初始化组织/项目/管理员与 MinIO buckets: langfuse, langfuse-batch, langfuse-media
 # 访问 http://localhost:3000
 ```
 
@@ -266,11 +291,12 @@ docker-compose up -d
 - **无上传**：模板生成（ResumeDocxSkill 标准排版）
 - 导出文件即收即删，不长期堆积
 
-### 8. 合规与限流
+### 8. 合规、限流与认证
 
 - **合规校验**：注入检测 / 手机号 / 身份证（GB11643 校验位）/ 银行卡（Luhn）/ 文件魔数
-- **限流**：同一套滑动窗口实现，全局兜底（120 次/分钟）+ 端点级严格配额（流式 10 次/60s、导出 20 次/60s）
-- 路由层在建立流式连接前拦截，返回 400/403/429
+- **限流**：同一套滑动窗口实现，全局兜底（120 次/分钟）+ 端点级严格配额（流式 10 次/60s、导出 20 次/60s、登录 5 次/60s），按 X-Forwarded-For 第一跳识别客户端，过期桶惰性淘汰；网关层另有每 IP 令牌桶（默认 50 req/s，突发 100）
+- 路由层在建立流式连接前拦截，返回 400/403/429；上传按 1MB 分块落盘并硬限 10MB（无 Content-Length 也无法撑爆内存/磁盘）
+- **JWT 认证（可选开关）**：`AUTH_ENABLED=false` 时全开放（Demo 默认，前端无登录入口）；置 true 后除精确白名单（健康检查、文档、`/api/auth/login`）外均需 Bearer Token。`ENV=prod` 或开启鉴权但使用默认 `JWT_SECRET` 时服务拒绝启动；演示账号通过 `ADMIN_USERNAME/ADMIN_PASSWORD` 配置
 
 ### 9. 评测框架
 
@@ -286,12 +312,13 @@ docker-compose up -d
 ```bash
 cd backend/api-service
 python -m pytest tests/ -q
-# 399 passed, 1 deselected
+# 459 passed（未安装可选依赖 langfuse 时，其 1 个专属用例报 ModuleNotFoundError，属环境缺包而非回归）
 ```
 
 ```bash
-cd frontend
-npx tsc --noEmit  # 0 errors
+cd backend/api-gateway && go test ./...     # 网关（CI 上带 -race）
+cd frontend && npx tsc --noEmit && npm run lint
+cd data/java-pipeline && mvn -q compile    # Flink 管道编译
 ```
 
 ---
@@ -300,9 +327,9 @@ npx tsc --noEmit  # 0 errors
 
 代码默认值 < `config.yaml` < 环境变量
 
-- **`config.yaml`**：业务行为参数（模型路径、MAS、RAG、Memory 分区）
-- **`.env`**：敏感凭证（API Key、数据库连接、JWT Secret）
-- **环境变量**：`FULIN_` 前缀覆盖配置，生产环境用环境变量注入
+- **`config.yaml`**：业务行为参数（模型路径、MAS、RAG、Memory 分区）；用 `FULIN_` 前缀 + 双下划线分层的环境变量覆盖（如 `FULIN_RAG__TOP_K=5`）
+- **`.env`（仓库根目录）**：基础设施与敏感凭证，变量名无前缀（如 `MYSQL_HOST`、`JWT_SECRET`、`AUTH_ENABLED`、`CORS_ORIGINS`），模板见 `.env.example`
+- **Langfuse**：独立使用 `langfuse/.env`（模板 `langfuse/.env.example`），加密密钥不入库
 
 ---
 

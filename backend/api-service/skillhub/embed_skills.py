@@ -79,7 +79,7 @@ def embed_skills(force_rebuild: bool = False):
     ids = [f"skill_{i:04d}" for i in range(len(all_items))]
 
     print("[STEP] 正在编码...")
-    embeddings = embedding_service.encode(texts, batch_size=32, show_progress_bar=True)
+    embedding_service.encode(texts, batch_size=32, show_progress_bar=True)
 
     print("[STEP] 写入向量库...")
     vector_store.delete_collection()
@@ -107,9 +107,10 @@ def test_search(query: str, top_k: int = 3):
 
     for i, r in enumerate(results, 1):
         skill = r["metadata"].get("skill", "unknown")
-        score = r.get("distance", 0)
+        # distance 为余弦距离（越小越相似），展示时换算成相似度
+        score = 1.0 - r.get("distance", 1.0)
         text = r["content"]
-        print(f"   [{i}] {skill} (score={score:.4f}): {text}")
+        print(f"   [{i}] {skill} (similarity={score:.4f}): {text}")
 
 
 if __name__ == "__main__":

@@ -6,9 +6,9 @@ API_ROOT = Path(__file__).resolve().parents[1]
 if str(API_ROOT) not in sys.path:
     sys.path.insert(0, str(API_ROOT))
 
-from rag.graph.neo4j_client import Neo4jClient
-from scripts.train_data_builder import TrainDataBuilder
-from logger import get_logger
+from rag.graph.neo4j_client import Neo4jClient  # noqa: E402
+from scripts.train_data_builder import TrainDataBuilder  # noqa: E402
+from logger import get_logger  # noqa: E402
 
 logger = get_logger(__name__)
 
@@ -53,7 +53,7 @@ def main():
     print("\n[STEP 3] 导入训练数据到图谱...")
     result = builder.build_from_json_file(TRAIN_DATA_PATH)
 
-    print(f"\n[OK] 导入完成:")
+    print("\n[OK] 导入完成:")
     print(f"   总计: {result['total']} 条")
     print(f"   成功: {result['success']} 条")
     print(f"   失败: {result['failed']} 条")

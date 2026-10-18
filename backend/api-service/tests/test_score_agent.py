@@ -60,7 +60,7 @@ class TestResumeScoreAgent:
         """未传入 LLM 时应该自动从 registry 获取"""
         with patch("agents.skills.resume_agents.score_agent.get_agent") as mock_get:
             mock_get.return_value = self._make_mock_llm()
-            agent = ResumeScoreAgent()
+            ResumeScoreAgent()
             mock_get.assert_called_once_with(provider="local")
 
     def test_run_returns_valid_state(self, agent, base_state):
