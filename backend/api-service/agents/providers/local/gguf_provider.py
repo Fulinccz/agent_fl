@@ -31,7 +31,7 @@ from typing import Optional, List, Dict, Any, Generator
 import requests
 
 from logger import get_logger
-from services.tracing import start_span, update_current_generation
+from services.tracing import start_span, update_observation
 from ...core.base_provider import BaseProvider
 from .token_processor import TokenProcessor
 from .utils import check_stop_patterns
@@ -195,6 +195,9 @@ class GGUFProvider(BaseProvider):
             "stream": stream,
             "chat_template_kwargs": {"enable_thinking": enable_thinking},
         }
+        if stream:
+            # 最后一个 chunk（choices 为空）携带 usage，供 Langfuse 记录 token 用量
+            payload["stream_options"] = {"include_usage": True}
         return payload
 
     @staticmethod
@@ -228,7 +231,9 @@ class GGUFProvider(BaseProvider):
             raise RuntimeError(f"GGUF 生成失败：{e}") from e
 
         text = self._strip_think(text)
-        update_current_generation(output=text[:500])
+        # output 回填由外层 executor 的持有式 update_observation 完成
+        # （provider 层拿不到 obs，且 update_current_* 依赖的 OTEL context 在
+        # iterate_in_threadpool 线程池迭代下不可靠）
         return text
 
     def generate_stream(
@@ -254,8 +259,9 @@ class GGUFProvider(BaseProvider):
             input=prompt[:2000],
             metadata={"model": self._model_name, "device": "cpu",
                       "provider": "local-gguf", "stream": True},
-        ):
+        ) as obs:
             processor = TokenProcessor(parse_think=kwargs.get("parse_think", True))
+            usage_map: Optional[Dict[str, int]] = None
             stop_patterns = [
                 "\n【简历评分】",
                 "\n### 【简历评分】",
@@ -284,6 +290,11 @@ class GGUFProvider(BaseProvider):
                             continue
                         choices = chunk.get("choices") or []
                         if not choices:
+                            if chunk.get("usage"):
+                                usage_map = {
+                                    "input": chunk["usage"].get("prompt_tokens", 0) or 0,
+                                    "output": chunk["usage"].get("completion_tokens", 0) or 0,
+                                }
                             continue
                         piece = choices[0].get("delta", {}).get("content")
                         if not piece:
@@ -307,6 +318,12 @@ class GGUFProvider(BaseProvider):
             finally:
                 with self._stop_lock:
                     self._stop_events.discard(stop_event)
+                if usage_map is not None:
+                    update_observation(obs, output=processor.full_text[:2000],
+                                       usage=usage_map, metadata={"token_count": token_count})
+                else:
+                    update_observation(obs, output=processor.full_text[:2000],
+                                       metadata={"token_count": token_count})
                 logger.info(f"流式生成完成，共 {token_count} 个 token")
 
     def generate_with_thoughts(self, prompt: str, **kwargs) -> Generator[Dict[str, Any], None, None]:

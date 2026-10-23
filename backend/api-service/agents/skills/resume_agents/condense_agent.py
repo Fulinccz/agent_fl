@@ -9,7 +9,7 @@ import re
 from typing import Any, Dict, Optional
 
 from logger import get_logger
-from services.tracing import start_span, update_current_generation
+from services.tracing import start_span, update_observation
 from .textutil import split_text, strip_llm_artifacts
 
 logger = get_logger(__name__)
@@ -135,9 +135,9 @@ class ResumeCondenseAgent:
 6. 只输出精简后的简历正文，不要任何解释、前后缀和 markdown 代码块"""
 
         try:
-            with start_span("llm-resume-condense", as_type="generation", input=prompt[:500]):
+            with start_span("llm-resume-condense", as_type="generation", input=prompt[:500]) as obs:
                 result = self.llm.generate(prompt, deepThinking=False, max_new_tokens=2048)
-                update_current_generation(output=result[:500])
+                update_observation(obs, output=result[:500])
         except Exception as e:
             logger.warning(f"[ResumeCondenseAgent] LLM 精简调用失败: {e}")
             return None

@@ -44,6 +44,7 @@ Thumbs.db
 # Editor directories and files
 .vscode/
 .idea/
+.trae/
 *.suo
 *.ntvs*
 *.njsproj

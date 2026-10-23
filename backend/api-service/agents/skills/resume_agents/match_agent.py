@@ -6,7 +6,7 @@ from typing import Dict, Any, List, Optional
 
 from agents.registry import get_agent
 from logger import get_logger
-from services.tracing import start_span, update_current_generation
+from services.tracing import start_span, update_observation
 from .state import ResumeState
 
 logger = get_logger(__name__)
@@ -65,10 +65,10 @@ class JDMatchAgent:
     "suggestions": [{{"category": "类别（2-4字）", "suggestion": "针对简历原文具体内容的建议", "example": "基于简历原文的改写示例"}}]
 }}"""
 
-            with start_span("llm-jd-match", as_type="generation", input=prompt[:500]):
+            with start_span("llm-jd-match", as_type="generation", input=prompt[:500]) as obs:
                 # 3 条建议（含改写示例）约 300-450 token，默认 128 会截断 JSON
                 result = self.llm.generate(prompt, deepThinking=False, max_new_tokens=512)
-                update_current_generation(output=result[:500])
+                update_observation(obs, output=result[:500])
             match_result = self._parse_match_result(result)
             state["match_result"] = match_result
 

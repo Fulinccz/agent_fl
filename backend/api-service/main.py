@@ -73,6 +73,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error("Failed to start multimodal preheat: %s", e)
 
+    # 后台预热嵌入模型（技能路由 L2 与 RAG 检索共用的进程级实例）
+    # 惰性 import sentence-transformers/torch 冷启动约 46s（模型权重加载仅 0.1s），
+    # 不预热的话首次技能识别请求会被这段 import 阻塞近一分钟
+    try:
+        from rag.embeddings import get_embedding_service
+        thread = threading.Thread(target=lambda: get_embedding_service().dimension, daemon=True)
+        thread.start()
+        logger.info("Embedding service preheating started in background thread")
+    except Exception as e:
+        logger.error("Failed to start embedding preheat: %s", e)
+
     # 注意：不要在此处注册 signal 处理器——会覆盖 uvicorn 的优雅退出
     # （uvicorn 的 handle_exit 负责 should_exit → 请求排空 → lifespan shutdown）
 

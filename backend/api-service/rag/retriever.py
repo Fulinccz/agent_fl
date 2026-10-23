@@ -25,8 +25,8 @@ class RAGRetriever:
     @property
     def embedding_service(self):
         if self._embedding_service is None:
-            from .embeddings import EmbeddingService
-            self._embedding_service = EmbeddingService()
+            from .embeddings import get_embedding_service
+            self._embedding_service = get_embedding_service()
         return self._embedding_service
     
     @property

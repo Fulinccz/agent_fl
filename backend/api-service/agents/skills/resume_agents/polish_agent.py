@@ -4,7 +4,7 @@ from typing import Dict, Any, Optional, Generator, List
 
 from agents.registry import get_agent
 from logger import get_logger
-from services.tracing import start_span, update_current_generation
+from services.tracing import start_span, update_observation
 from .state import ResumeState
 from .textutil import split_text, strip_llm_artifacts
 
@@ -41,9 +41,9 @@ class ResumePolishAgent:
                     segment, jd, extra,
                     part_hint=self._part_hint(idx, len(segments)),
                 )
-                with start_span("llm-polish", as_type="generation", input=prompt[:500]):
+                with start_span("llm-polish", as_type="generation", input=prompt[:500]) as obs:
                     result = self.llm.generate(prompt, deepThinking=False, max_new_tokens=1024)
-                    update_current_generation(output=result[:500])
+                    update_observation(obs, output=result[:500])
                 parts.append(result)
 
             polished_raw = "\n\n".join(parts)
@@ -89,13 +89,13 @@ class ResumePolishAgent:
                     part_hint=self._part_hint(idx, len(segments)),
                 )
 
-                with start_span("llm-polish-stream", as_type="generation", input=prompt[:500]):
+                with start_span("llm-polish-stream", as_type="generation", input=prompt[:500]) as obs:
                     accumulated = ""
                     for chunk in self.llm.generate_stream(prompt, deepThinking=False, max_new_tokens=1024):
                         if chunk.get("type") == "token":
                             accumulated += chunk.get("content", "")
                         yield chunk
-                    update_current_generation(output=accumulated[:500])
+                    update_observation(obs, output=accumulated[:500])
 
             logger.info(f"[{self.name}] 流式润色完成（{len(segments)} 段）")
 

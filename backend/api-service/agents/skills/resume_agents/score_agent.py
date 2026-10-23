@@ -6,7 +6,7 @@ from typing import Dict, Any, Optional
 
 from agents.registry import get_agent
 from logger import get_logger
-from services.tracing import start_span, update_current_generation
+from services.tracing import start_span, update_observation
 from .state import ResumeState
 
 logger = get_logger(__name__)
@@ -78,9 +78,9 @@ class ResumeScoreAgent:
 3. suggestion：{profile['s_req']}
 4. 确保是有效的 JSON 格式"""
 
-            with start_span("llm-resume-score", as_type="generation", input=prompt[:500]):
+            with start_span("llm-resume-score", as_type="generation", input=prompt[:500]) as obs:
                 result = self.llm.generate(prompt, max_new_tokens=profile["tokens"])
-                update_current_generation(output=result[:500])
+                update_observation(obs, output=result[:500])
 
             scores = self._parse_scores(result)
             analysis = self._parse_analysis(result, profile["a_cap"], profile["s_cap"])

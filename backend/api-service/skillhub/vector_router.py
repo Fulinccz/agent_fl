@@ -1,6 +1,6 @@
 from typing import List, Dict, Any, Optional
 from logger import get_logger
-from rag.embeddings import EmbeddingService
+from rag.embeddings import EmbeddingService, get_embedding_service
 from rag.vector_store import VectorStore
 
 logger = get_logger(__name__)
@@ -40,7 +40,7 @@ class VectorSkillRouter:
     @property
     def embedding_service(self) -> EmbeddingService:
         if self._embedding_service is None:
-            self._embedding_service = EmbeddingService()
+            self._embedding_service = get_embedding_service()
         return self._embedding_service
 
     @property
@@ -92,9 +92,22 @@ class VectorSkillRouter:
 
         return sorted_candidates
 
-    def get_confident_skill(self, candidates: List[VectorCandidate], threshold: float = 0.85) -> Optional[str]:
-        """如果只有一个高置信候选，直接返回"""
-        high_conf = [c for c in candidates if c.score >= threshold]
-        if len(high_conf) == 1:
-            return high_conf[0].skill
-        return None
+    def get_confident_skill(self, candidates: List[VectorCandidate], threshold: float = 0.85,
+                            margin: float = 0.05) -> Optional[str]:
+        """判断是否有"足够可信"的技能候选（供 L2 层直接返回、跳过 L3 LLM）。
+
+        旧实现要求"恰好一个候选 ≥ threshold"，导致只要输入同时沾到两个技能
+        （简历类输入几乎必然如此）就放弃向量结果、下沉到 L3 本地 LLM（实测 11s+）。
+        改为：top1 达到高置信阈值，且相对 top2 有领先优势即可直接采纳。
+        """
+        if not candidates:
+            return None
+
+        top1 = candidates[0]
+        if top1.score < threshold:
+            return None
+
+        if len(candidates) > 1 and (top1.score - candidates[1].score) < margin:
+            return None
+
+        return top1.skill

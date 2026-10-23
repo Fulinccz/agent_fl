@@ -5,7 +5,7 @@ import re
 from typing import Any, Dict, Generator, Optional
 
 from logger import get_logger
-from services.tracing import start_span, update_current_generation
+from services.tracing import start_span, update_observation
 from ..prompts import CHAT_SYSTEM_PROMPT, CHAT_WITH_RAG_PROMPT
 from .base import BaseExecutor, ReActLoop, _resolve_llm
 from ..state import StepResult
@@ -94,9 +94,9 @@ class ChatExecutor(BaseExecutor):
         try:
             llm = _resolve_llm(self._llm, task_input)
             prompt = self._build_prompt(task_input)
-            with start_span("llm-chat", as_type="generation", input=prompt[:500]):
+            with start_span("llm-chat", as_type="generation", input=prompt[:500]) as obs:
                 text = llm.generate(prompt, deepThinking=False, max_new_tokens=self.max_new_tokens)
-                update_current_generation(output=(text or "")[:500])
+                update_observation(obs, output=(text or "")[:500])
             text = self._clean(text or "")
 
             if not text:
@@ -144,7 +144,7 @@ class ChatExecutor(BaseExecutor):
                     rag_context = observation
 
             prompt = self._build_prompt_with_context(message, rag_context)
-            with start_span("llm-chat-stream", as_type="generation", input=prompt[:500]):
+            with start_span("llm-chat-stream", as_type="generation", input=prompt[:500]) as obs:
                 accumulated = ""
                 for chunk in llm.generate_stream(
                     prompt, deepThinking=False, max_new_tokens=self.max_new_tokens
@@ -156,7 +156,7 @@ class ChatExecutor(BaseExecutor):
                     elif chunk.get("type") == "error":
                         yield {"type": "error", "content": chunk.get("content", "生成错误")}
                         return
-                update_current_generation(output=accumulated[:500])
+                update_observation(obs, output=accumulated[:500])
         except Exception as e:
             logger.error(f"[{self.name}] 流式执行失败: {e}")
             yield {"type": "error", "content": str(e)}

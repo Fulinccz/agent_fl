@@ -5,7 +5,7 @@ import json
 from typing import Any, Callable, Dict, Generator, List, Optional
 
 from logger import get_logger
-from services.tracing import start_span, update_current_generation
+from services.tracing import start_span, update_observation
 from agents.llm import get_shared_llm
 from ..prompts import REACT_DECIDE_SYSTEM_PROMPT, REACT_DECIDE_USER_PROMPT
 from ..state import StepResult
@@ -56,11 +56,11 @@ class ReActLoop:
             )
         )
         try:
-            with start_span("llm-react-decide", as_type="generation", input=prompt[:500]):
+            with start_span("llm-react-decide", as_type="generation", input=prompt[:500]) as obs:
                 raw = self.llm.generate(
                     prompt, deepThinking=False, max_new_tokens=self.max_new_tokens
                 )
-                update_current_generation(output=(raw or "")[:300])
+                update_observation(obs, output=(raw or "")[:300])
             thought, action, query = self._parse_decision(raw or "")
         except Exception as e:
             logger.warning(f"[ReActLoop] 决策轮失败，直接回答: {e}")

@@ -15,7 +15,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from logger import get_logger
-from services.tracing import start_span, update_current_generation
+from services.tracing import start_span, update_observation
 from agents.llm import get_shared_llm
 from .state import (
     Reflection,
@@ -134,9 +134,9 @@ class LLMCritic:
         )
 
         try:
-            with start_span("llm-reflect", as_type="generation", input=prompt[:500]):
+            with start_span("llm-reflect", as_type="generation", input=prompt[:500]) as obs:
                 raw = self._llm.generate(prompt, deepThinking=False, max_new_tokens=160)
-                update_current_generation(output=raw[:300])
+                update_observation(obs, output=raw[:300])
             return self._parse_verdict(raw, step.step_id)
         except Exception as e:
             logger.warning(f"[LLMCritic] LLM 审查失败: {e}")

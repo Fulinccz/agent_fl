@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional
 
 from logger import get_logger
@@ -18,6 +19,14 @@ from .state import (
 )
 
 logger = get_logger(__name__)
+
+# 闲聊/问候类短句前缀：这类输入既不会被 L1 关键词层命中（阈值 0.9 不可达），
+# 又会因 L2 候选过少/分数不足下沉到 L3 本地 LLM（实测约 11s），故用规则快通道短路
+_SMALLTALK_RE = re.compile(
+    r"^(?:你好|您好|哈喽|哈啰|嗨|在吗|hi|hello|hey)(?![a-zA-Z])[\s，,。.！!？?~～]*",
+    re.IGNORECASE,
+)
+_SMALLTALK_MAX_LEN = 24
 
 # 显式多步优化信号词（命中即视为复杂任务）
 _COMPLEX_MARKERS = [
@@ -132,7 +141,20 @@ class IntentRecognizer:
                 is_complex=True,
             )
 
-        # 3. 三层路由识别单技能意图（透传 context，路由 L3 层按 context.provider 选择分类模型）
+        # 3. 闲聊短句快通道：问候类输入直接判定，省掉向量 + LLM 两跳（L3 实测约 11s）
+        if self._is_smalltalk(user_input):
+            logger.info("[IntentRecognizer] 闲聊快通道命中，跳过向量/LLM 路由")
+            return self._post_process(
+                skill=INTENT_CHAT_GENERAL,
+                confidence=0.9,
+                source="rule",
+                reason="问候/闲聊短句快通道",
+                user_input=user_input,
+                has_resume=has_resume or has_file,
+                has_jd=has_jd,
+            )
+
+        # 4. 三层路由识别单技能意图（透传 context，路由 L3 层按 context.provider 选择分类模型）
         skill, confidence, source, reason = self._route(user_input, context)
 
         # 4. 后处理与复杂度修正
@@ -158,6 +180,32 @@ class IntentRecognizer:
     def _hit_complex_marker(user_input: str) -> bool:
         lowered = user_input.lower()
         return any(marker in lowered for marker in _COMPLEX_MARKERS)
+
+    @classmethod
+    def _is_smalltalk(cls, user_input: str) -> bool:
+        """判断是否为问候/闲聊类短句（可安全跳过向量与 LLM 路由）
+
+        必须同时满足：短输入 + 问候前缀 + 不含任何技能关键词，
+        避免把"你好，帮我润色一下"这类带技能诉求的输入误判为闲聊。
+        """
+        text = (user_input or "").strip()
+        if not text or len(text) > _SMALLTALK_MAX_LEN:
+            return False
+        if not _SMALLTALK_RE.match(text):
+            return False
+        return not cls._has_skill_keyword(text)
+
+    @staticmethod
+    def _has_skill_keyword(text: str) -> bool:
+        from skillhub.keyword_matcher import KeywordMatcher
+
+        lowered = text.lower()
+        for skill, keywords in KeywordMatcher.SKILL_KEYWORDS.items():
+            if skill == INTENT_CHAT_GENERAL:
+                continue
+            if any(kw.lower() in lowered for kw in keywords):
+                return True
+        return False
 
     def _route(self, user_input: str, context: Optional[Dict[str, Any]] = None) -> tuple:
         """调用三层路由，返回 (skill, confidence, source, reason)；失败时降级"""

@@ -26,13 +26,14 @@ class SkillRouterAgent:
     L3 LLMIntentClassifier: 模型推理，复杂意图最终决策
 
     决策链：
-    用户输入 → L1 → [置信度>=0.9? 返回] → L2 → [唯一高匹配? 返回] → L3 → 返回
+    用户输入 → L1 → [置信度>=0.9? 返回] → L2 → [高置信且领先 top2? 返回] → L3 → 返回
     """
 
     def __init__(
         self,
         keyword_threshold: float = 0.9,
         vector_threshold: float = 0.3,
+        vector_confident_threshold: float = 0.85,
         llm_provider: str = "local",
         llm_model: Optional[str] = None,
         llm: Optional[Any] = None
@@ -43,6 +44,8 @@ class SkillRouterAgent:
 
         self.keyword_threshold = keyword_threshold
         self.vector_threshold = vector_threshold
+        # L2 直接采纳的门槛：低于它说明语义指向不够明确，交给 L3 决策
+        self.vector_confident_threshold = vector_confident_threshold
 
     def route(self, user_input: str, context: Optional[Dict[str, Any]] = None) -> RouteResult:
         """
@@ -74,7 +77,9 @@ class SkillRouterAgent:
         vec_candidates = self.vector_router.search(user_input, top_k=5)
 
         if vec_candidates:
-            confident_skill = self.vector_router.get_confident_skill(vec_candidates, threshold=self.vector_threshold)
+            confident_skill = self.vector_router.get_confident_skill(
+                vec_candidates, threshold=self.vector_confident_threshold
+            )
             if confident_skill:
                 best = [c for c in vec_candidates if c.skill == confident_skill][0]
                 logger.info(f"[SkillRouter] L2 Vector hit: {confident_skill} (score={best.score:.3f})")

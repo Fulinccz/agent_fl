@@ -20,7 +20,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, System
 from memory.memory_manager import MemoryManager
 from memory import get_memory_manager
 from logger import get_logger
-from services.tracing import start_span, update_current_span
+from services.tracing import start_span, update_observation
 
 logger = get_logger(__name__)
 
@@ -212,10 +212,10 @@ class ConversationGraph:
 
         with start_span("fallback-conversation", as_type="agent",
                          input=user_message[:300], session_id=session_id,
-                         metadata={"path": "conversation_graph", "provider": provider}):
+                         metadata={"path": "conversation_graph", "provider": provider}) as obs:
             result = await self.app.ainvoke(state, {"configurable": {}})
             response = result.get("response") or "抱歉，我无法生成回复。"
-            update_current_span(output=response[:500])
+            update_observation(obs, output=response[:500])
 
         # 分块输出（保持与旧流式契约一致的 token 事件形态）
         chunk_size = 24

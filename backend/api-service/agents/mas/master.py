@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Generator, List, Optional
 
 from logger import get_logger
-from services.tracing import start_span, update_current_span
+from services.tracing import start_span, update_observation
 from .intent import IntentRecognizer
 from .planner import MasterAgent
 from .reflector import Reflector
@@ -138,7 +138,7 @@ class MasterOrchestrator:
             },
             session_id=context.get("session_id"),
             tags=["mas"],
-        ):
+        ) as root_obs:
             for event in self._run_stream_impl(user_input, context, preset_intent):
                 if event.get("type") == "complete":
                     data = event.get("data") or {}
@@ -147,7 +147,7 @@ class MasterOrchestrator:
                         for k in ("answer", "overall_score", "steps_success", "steps_total")
                         if data.get(k) is not None
                     }
-                    update_current_span(output=final_output)
+                    update_observation(root_obs, output=final_output)
                 yield event
 
     def _run_stream_impl(
@@ -162,17 +162,17 @@ class MasterOrchestrator:
 
         try:
             # ---------- 1. 意图识别 ----------
-            with start_span("classify-intent", input=(user_input or "")[:200]):
+            with start_span("classify-intent", input=(user_input or "")[:200]) as obs:
                 intent = self.intent_recognizer.recognize(
                     user_input, context, preset_intent
                 )
-                update_current_span(output=intent.to_dict())
+                update_observation(obs, output=intent.to_dict())
             yield {"type": "intent", "data": intent.to_dict()}
 
             # ---------- 2. Master 规划 ----------
-            with start_span("plan-tasks", input=(user_input or "")[:200]):
+            with start_span("plan-tasks", input=(user_input or "")[:200]) as obs:
                 plan = self.master_agent.plan(user_input, intent, context)
-                update_current_span(output={
+                update_observation(obs, output={
                     "source": plan.source,
                     "steps_count": len(plan.steps),
                     "intent": plan.intent,
@@ -372,7 +372,7 @@ class MasterOrchestrator:
             "reflect",
             input={"step": step.step_id, "agent": step.agent,
                    "success": result.success},
-        ):
+        ) as obs:
             reflection = self.reflector.review(
                 step, result, plan.goal, blackboard.trace_lines()
             )
@@ -385,7 +385,7 @@ class MasterOrchestrator:
                     feedback="请检查输出格式与完整性后重新执行",
                     source="policy",
                 )
-        update_current_span(output=reflection.to_dict())
+            update_observation(obs, output=reflection.to_dict())
         yield {"type": "reflection", "data": reflection.to_dict()}
         return reflection.verdict, reflection
 
@@ -482,7 +482,7 @@ class MasterOrchestrator:
         with start_span(
             f"step:{step.agent}",
             input={"step_id": step.step_id, "task": (step.task or "")[:200]},
-        ):
+        ) as obs:
             try:
                 if getattr(executor, "streamable", False):
                     result = yield from self._iter_streaming(executor, step, task_input)
@@ -493,7 +493,8 @@ class MasterOrchestrator:
                 result = StepResult(
                     step_id=step.step_id, agent=step.agent, success=False, error=str(e)
                 )
-            update_current_span(
+            update_observation(
+                obs,
                 output={"success": result.success, "summary": result.summary,
                         "error": result.error}
             )

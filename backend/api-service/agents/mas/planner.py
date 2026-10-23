@@ -10,7 +10,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from logger import get_logger
-from services.tracing import start_span, update_current_generation
+from services.tracing import start_span, update_observation
 from agents.llm import get_shared_llm
 from agents.skills.resume_agents.condense_agent import should_condense
 from .state import (
@@ -178,9 +178,9 @@ class MasterAgent:
         prompt = f"{system}\n\n{user}"
 
         try:
-            with start_span("llm-plan", as_type="generation", input=prompt[:500]):
+            with start_span("llm-plan", as_type="generation", input=prompt[:500]) as obs:
                 raw = self._llm.generate(prompt, deepThinking=False, max_new_tokens=320)
-                update_current_generation(output=raw[:500])
+                update_observation(obs, output=raw[:500])
             steps = self._parse_steps(raw)
             if not steps:
                 logger.warning("[MasterAgent] LLM 计划解析为空，回退模板")

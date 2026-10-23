@@ -18,7 +18,7 @@ import threading
 from typing import Optional, List, Dict, Generator, Any
 
 from logger import get_logger
-from services.tracing import start_span, update_current_generation
+from services.tracing import start_span, update_observation
 from ...core.base_provider import BaseProvider
 
 logger = get_logger(__name__)
@@ -154,7 +154,7 @@ class DeepSeekProvider(BaseProvider):
                 input=prompt[:2000],
                 metadata={"model": self._model_name, "base_url": self._base_url,
                           "provider": "deepseek"},
-            ):
+            ) as obs:
                 resp = self._client.chat.completions.create(
                     model=self._model_name,
                     messages=self._build_messages(prompt),
@@ -165,11 +165,11 @@ class DeepSeekProvider(BaseProvider):
                 content = resp.choices[0].message.content or ""
                 usage = getattr(resp, "usage", None)
                 if usage is not None:
-                    update_current_generation(usage={
+                    update_observation(obs, usage={
                         "input": getattr(usage, "prompt_tokens", 0) or 0,
                         "output": getattr(usage, "completion_tokens", 0) or 0,
                     })
-                update_current_generation(output=content[:2000])
+                update_observation(obs, output=content[:2000])
             return content.strip()
         except Exception as e:
             raise RuntimeError(f"DeepSeek API 调用失败：{e}") from e
@@ -203,7 +203,7 @@ class DeepSeekProvider(BaseProvider):
                 input=prompt[:2000],
                 metadata={"model": self._model_name, "provider": "deepseek",
                           "stream": True},
-            ):
+            ) as obs:
                 stream = self._client.chat.completions.create(
                     model=self._model_name,
                     messages=self._build_messages(prompt),
@@ -228,7 +228,7 @@ class DeepSeekProvider(BaseProvider):
                         collected.append(delta.content)
                         yield {"type": "token", "content": delta.content}
 
-                update_current_generation(output="".join(collected)[:2000])
+                update_observation(obs, output="".join(collected)[:2000])
 
         except Exception as e:
             if not stop_event.is_set():

@@ -62,3 +62,39 @@ class TestVectorRouterScoring:
         fake_store.query.side_effect = RuntimeError("index missing")
         router._vector_store = fake_store
         assert router.search("anything") == []
+
+
+def _cand(skill: str, score: float):
+    from skillhub.vector_router import VectorCandidate
+    return VectorCandidate(skill=skill, score=score, text="sample", metadata={})
+
+
+class TestConfidentSkillAdoption:
+    """L2 直接采纳规则回归
+
+    旧实现要求"恰好一个候选 ≥ 阈值"，但简历类输入几乎总会同时命中多个技能，
+    导致向量层形同虚设、全部下沉到 L3 本地 LLM（实测 11s+/次）。
+    新规则：top1 达高置信阈值且领先 top2 即可采纳。
+    """
+
+    def _threshold(self):
+        return VectorSkillRouter().get_confident_skill
+
+    def test_top1_confident_with_margin_adopted(self):
+        # 实测形态："帮我优化这份简历" → polishing 0.925 / parse 0.849
+        got = self._threshold()([_cand("resume-polishing", 0.925), _cand("resume-parse", 0.849)])
+        assert got == "resume-polishing"
+
+    def test_single_candidate_adopted(self):
+        assert self._threshold()([_cand("jd-keyword-match", 0.93)]) == "jd-keyword-match"
+
+    def test_close_race_not_adopted(self):
+        # 领先不足 margin → 语义不明确，必须交给 L3 决策
+        assert self._threshold()([_cand("a", 0.90), _cand("b", 0.88)]) is None
+
+    def test_below_threshold_not_adopted(self):
+        # "你好，用一句话介绍你自己" 实测 top1=0.77，不足 0.85
+        assert self._threshold()([_cand("chat-general", 0.77), _cand("jd-keyword-match", 0.583)]) is None
+
+    def test_empty_candidates(self):
+        assert self._threshold()([]) is None

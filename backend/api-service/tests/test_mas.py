@@ -639,6 +639,34 @@ class TestIntentRecognizerExtra:
         assert "resume-polishing" in hits
         assert "resume-score" in hits
 
+    def test_smalltalk_fast_path_skips_llm_routing(self):
+        """问候类短句走规则快通道，不触发 L2 向量/L3 LLM（实测 L3 约 11s）"""
+        llm = MagicMock()
+        recognizer = IntentRecognizer(llm=llm, enable_vector=False)
+        result = recognizer.recognize("你好，用一句话介绍你自己", {})
+        assert result.name == INTENT_CHAT_GENERAL
+        assert result.source == "rule"
+        assert result.is_complex is False
+        assert result.params["agent"] == "chat"
+        llm.generate.assert_not_called()
+
+    def test_smalltalk_with_skill_keyword_not_short_circuited(self):
+        """问候前缀但含技能关键词 → 不得判为闲聊"""
+        assert IntentRecognizer._is_smalltalk("你好，帮我润色一下") is False
+        assert IntentRecognizer._is_smalltalk("你好，我这份简历能打多少分") is False
+
+    def test_smalltalk_rejects_long_input(self):
+        assert IntentRecognizer._is_smalltalk("你好" + "啊" * 30) is False
+        assert IntentRecognizer._is_smalltalk("今天天气怎么样") is False
+
+    def test_smalltalk_with_resume_context_can_upgrade(self):
+        """闲聊判定仍复用后处理：上下文含简历且有优化诉求时升级为复杂任务"""
+        recognizer = IntentRecognizer()
+        result = recognizer.recognize("你好，帮我改一下", {"resume": "简历内容"})
+        # "改" 不在技能关键词表中（闲聊前缀命中），但上下文含简历且有优化诉求 → 升级
+        assert result.name == INTENT_RESUME_OPTIMIZE
+        assert result.is_complex is True
+
 
 # ============ Master 规划补充测试 ============
 

@@ -23,7 +23,7 @@ from __future__ import annotations
 import os
 import threading
 from contextlib import contextmanager
-from typing import Any, Iterator, Optional
+from typing import Any, Dict, Iterator, Optional
 
 from logger import get_logger
 
@@ -135,7 +135,12 @@ def start_span(
 
 
 def update_current_span(output: Any = None, metadata: Optional[dict] = None):
-    """更新当前（span 类型）observation 的输出/元数据（未启用时 no-op）"""
+    """更新当前（span 类型）observation 的输出/元数据（未启用时 no-op）
+
+    注意：依赖 OTEL contextvars。FastAPI iterate_in_threadpool 迭代 SSE generator 时
+    每次可能切换线程，context 丢失导致更新静默失效——generator/多线程场景请改用
+    update_observation（持有式，直接更新 obs 对象，不依赖 context）。
+    """
     lf = get_langfuse()
     if lf is None:
         return
@@ -145,10 +150,47 @@ def update_current_span(output: Any = None, metadata: Optional[dict] = None):
         logger.warning("[Langfuse] 更新 span 失败: %s", e)
 
 
+def update_observation(
+    obs: Optional[Any],
+    output: Any = None,
+    usage: Optional[dict] = None,
+    metadata: Optional[dict] = None,
+):
+    """持有式更新 observation（推荐：跨线程/跨 generator 安全）
+
+    用法：
+        with start_span("llm-chat", as_type="generation", input=...) as obs:
+            text = llm.generate(...)
+            update_observation(obs, output=text[:500], usage={"input": 12, "output": 34})
+
+    Args:
+        obs: start_span yield 的 observation 对象（未启用跟踪时为 None，此处 no-op）
+        output: 输出内容（自动截断由调用方控制）
+        usage: 形如 {"input": 12, "output": 34}（单位 TOKENS）
+        metadata: 附加元数据
+    """
+    if obs is None:
+        return
+    try:
+        kwargs: Dict[str, Any] = {}
+        if output is not None:
+            kwargs["output"] = output
+        if usage is not None:
+            kwargs["usage_details"] = usage
+        if metadata is not None:
+            kwargs["metadata"] = metadata
+        if not kwargs:
+            return
+        obs.update(**kwargs)
+    except Exception as e:
+        logger.warning("[Langfuse] 持有式更新 observation 失败: %s", e)
+
+
 def update_current_generation(output: Any = None, usage: Optional[dict] = None):
     """更新当前（generation 类型）observation 的输出/用量（未启用时 no-op）
 
-    usage 形如 {"input": 12, "output": 34}（单位默认 TOKENS）
+    usage 形如 {"input": 12, "output": 34}（单位默认 TOKENS）。
+    同 update_current_span：generator/多线程场景请改用 update_observation。
     """
     lf = get_langfuse()
     if lf is None:
