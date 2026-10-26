@@ -11,9 +11,10 @@ from fastapi import UploadFile
 
 from api.routes import upload as upload_route
 from api.routes import deps
+from api.routes import common as common_module
 from agents.mas.state import INTENT_RESUME_OPTIMIZE
 from rag.multimodal import MultimodalDependencyError
-from api.routes.upload import _cleanup_file
+from api.routes.common import cleanup_file
 
 
 def _txt_upload(content: bytes = "张三\n三年Java开发经历".encode("utf-8"), filename="resume.txt"):
@@ -58,14 +59,14 @@ class TestCleanupFile:
     def test_removes_existing_file(self, tmp_path):
         f = tmp_path / "x.tmp"
         f.write_text("data", encoding="utf-8")
-        _cleanup_file(str(f))
+        cleanup_file(str(f))
         assert not f.exists()
 
     def test_none_path_is_noop(self):
-        _cleanup_file(None)
+        cleanup_file(None)
 
     def test_missing_path_is_noop(self, tmp_path):
-        _cleanup_file(str(tmp_path / "already_gone.tmp"))
+        cleanup_file(str(tmp_path / "already_gone.tmp"))
 
 
 # ---------- MAS 流水线接入 ----------
@@ -75,7 +76,7 @@ class TestUploadMasStream:
         self, monkeypatch, tmp_path
     ):
         _allow_rate_limit(monkeypatch)
-        monkeypatch.setattr(upload_route, "UPLOAD_DIR", str(tmp_path))
+        monkeypatch.setattr(common_module, "UPLOAD_DIR", str(tmp_path))
         monkeypatch.setattr(
             upload_route, "parse_multimodal",
             lambda path: {"text": "张三\n三年Java开发经历，主导订单系统", "modality": "document"}
@@ -115,7 +116,7 @@ class TestUploadMasStream:
         self, monkeypatch, tmp_path
     ):
         _allow_rate_limit(monkeypatch)
-        monkeypatch.setattr(upload_route, "UPLOAD_DIR", str(tmp_path))
+        monkeypatch.setattr(common_module, "UPLOAD_DIR", str(tmp_path))
         monkeypatch.setattr(
             upload_route, "parse_multimodal",
             lambda path: {"text": "简历正文内容" * 10, "modality": "document"}
@@ -154,7 +155,7 @@ class TestUploadMasStream:
 
     async def test_no_text_recognized_returns_422(self, monkeypatch, tmp_path):
         _allow_rate_limit(monkeypatch)
-        monkeypatch.setattr(upload_route, "UPLOAD_DIR", str(tmp_path))
+        monkeypatch.setattr(common_module, "UPLOAD_DIR", str(tmp_path))
         monkeypatch.setattr(
             upload_route, "parse_multimodal",
             lambda path: {"text": "  ", "modality": "image"}
@@ -173,7 +174,7 @@ class TestUploadMasStream:
 
     async def test_missing_optional_dependency_returns_400(self, monkeypatch, tmp_path):
         _allow_rate_limit(monkeypatch)
-        monkeypatch.setattr(upload_route, "UPLOAD_DIR", str(tmp_path))
+        monkeypatch.setattr(common_module, "UPLOAD_DIR", str(tmp_path))
 
         def _raise(path):
             raise MultimodalDependencyError("缺少 tesseract")

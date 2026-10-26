@@ -65,8 +65,8 @@
 **一键启动（Windows）**：
 
 ```powershell
-powershell -File .\start.ps1   # MySQL/Redis 容器 + AI Service(:8000) + Gateway(:8080) + Frontend(:5173)，就绪后自动开浏览器
-powershell -File .\stop.ps1    # 停止
+powershell -File .\start.ps1   # MySQL/Redis + Langfuse(可选) 容器 + AI Service(:8000) + Gateway(:8080) + Frontend(:5173)，就绪后自动开浏览器
+powershell -File .\stop.ps1    # 停止（Langfuse 属独立 compose 项目，脚本已一并处理）
 ```
 
 首次先装依赖：`pip install -r backend/api-service/requirements.txt`、`npm install --prefix frontend`。本地模型预热约 30-60s，首条回复慢属正常。

@@ -326,6 +326,52 @@
   cursor: not-allowed;
 }
 
+/* 语音输入按钮：录音中变为红色脉冲胶囊，实时显示时长 */
+.voice-button {
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s ease;
+}
+
+.voice-button:disabled {
+  cursor: not-allowed;
+}
+
+.voice-button.recording {
+  width: auto;
+  padding: 0 10px;
+  gap: 5px;
+  border-radius: 999px;
+  border-color: #dc2626;
+  color: #dc2626;
+  background: rgba(220, 38, 38, 0.1);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  animation: voice-pulse 1.4s ease-in-out infinite;
+}
+
+.voice-button.transcribing {
+  width: auto;
+  padding: 0 10px;
+  border-radius: 999px;
+  border-color: var(--primary);
+  color: var(--primary);
+  font-size: 0.75rem;
+}
+
+.voice-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #dc2626;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes voice-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.35); }
+  50% { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0); }
+}
+
 .file-upload {
   position: absolute;
   inset: 0;
@@ -847,6 +893,22 @@
   color: #dc2626;
   line-height: 1.5;
   word-break: break-all;
+}
+
+.error-banner-close {
+  margin-left: auto;
+  flex: 0 0 auto;
+  border: none;
+  background: none;
+  color: #dc2626;
+  font-size: 0.8rem;
+  cursor: pointer;
+  line-height: 1.5;
+  opacity: 0.7;
+}
+
+.error-banner-close:hover {
+  opacity: 1;
 }
 
 /* ==================== 优化文档导出 ==================== */

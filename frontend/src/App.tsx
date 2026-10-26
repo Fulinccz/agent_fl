@@ -7,6 +7,7 @@ import { useAbortController, useSubmitControl } from './hooks/useAbortController
 import { useStreamResponse } from './hooks/useStreamResponse';
 import { useFileUpload } from './hooks/useFileUpload';
 import { useSkillRouter } from './hooks/useSkillRouter';
+import { useVoiceRecorder } from './hooks/useVoiceRecorder';
 import { agentService } from './services/agentService';
 import Logo from './assets/readyInClient/react.svg';
 
@@ -42,6 +43,7 @@ function App() {
   const [jd, setJd] = useState('');
   const [modelProvider, setModelProvider] = useState('deepseek');
   const [copied, setCopied] = useState(false);
+  const [voiceError, setVoiceError] = useState('');
   const [exportState, setExportState] = useState<{
     status: 'idle' | 'generating' | 'ready' | 'error';
     url?: string;
@@ -72,6 +74,20 @@ function App() {
 
   const { uploadedFile, handleFileSelect, clearFile } = useFileUpload();
 
+  // 语音输入：录音 → 后端本地 Whisper 转写 → 追加到简历输入框（不覆盖已有内容）
+  const {
+    state: voiceState,
+    seconds: voiceSeconds,
+    supported: voiceSupported,
+    toggle: toggleVoice
+  } = useVoiceRecorder({
+    onText: (text) => {
+      setVoiceError('');
+      setQuery((prev) => (prev.trim() ? `${prev.trimEnd()}\n${text}` : text));
+    },
+    onError: (message) => setVoiceError(message)
+  });
+
   const { routeState, routeIntent, clearRoute } = useSkillRouter({
     onRoute: () => {},
     onError: (error) => {
@@ -83,6 +99,8 @@ function App() {
     if (e) e.preventDefault();
 
     if (!canSubmit()) return;
+    // 录音中/转写中不提交，避免把未落定的语音内容送进流水线
+    if (voiceState !== 'idle') return;
     // 粘贴链路必须有简历文本；上传链路文本作为可选补充要求
     if (!query.trim() && !uploadedFile) return;
 
@@ -122,7 +140,7 @@ function App() {
       markSubmitting(false);
       clearFile();
     }
-  }, [query, jd, modelProvider, uploadedFile, canSubmit, markSubmitting, clearOutput, create, startStream, startUpload, clearFile, routeIntent, clearRoute]);
+  }, [query, jd, modelProvider, uploadedFile, canSubmit, markSubmitting, clearOutput, create, startStream, startUpload, clearFile, routeIntent, clearRoute, voiceState]);
 
   const handleStop = useCallback(() => {
     recordStopTime();
@@ -132,6 +150,7 @@ function App() {
   const confirmNewChat = useCallback(() => {
     setQuery('');
     setJd('');
+    setVoiceError('');
     clearOutput();
     clearFile();
     resetAbort();
@@ -269,10 +288,30 @@ function App() {
               onFileChange={handleFileSelect}
               onFileClear={clearFile}
               disabled={!canSubmit() && isStreaming}
+              isRecording={voiceState === 'recording'}
+              isTranscribing={voiceState === 'transcribing'}
+              recordSeconds={voiceSeconds}
+              voiceSupported={voiceSupported}
+              onVoiceToggle={toggleVoice}
             />
           </form>
 
           <SkillRouteBadge routeState={routeState} />
+
+          {voiceError && (
+            <div className="error-banner" role="alert">
+              <span className="error-banner-icon">🎤</span>
+              <span className="error-banner-text">{voiceError}</span>
+              <button
+                type="button"
+                className="error-banner-close"
+                onClick={() => setVoiceError('')}
+                title="关闭"
+              >
+                ✕
+              </button>
+            </div>
+          )}
 
           {error && (
             <div className="error-banner" role="alert">

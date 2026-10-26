@@ -4,7 +4,8 @@
 将文档 / 图片 / 音频统一解析为结构化文本，接入 Agent 流程：
 - 文档（pdf/doc/docx/txt）：复用 rag.document_processor（txt 直接读取）
 - 图片（png/jpg/jpeg/bmp/webp）：RapidOCR 本地离线 OCR
-- 音频（mp3/wav/m4a/flac/ogg）：faster-whisper 本地离线语音转写
+- 音频（mp3/wav/m4a/flac/ogg/webm）：faster-whisper 本地离线语音转写
+  （webm 为浏览器 MediaRecorder 默认输出格式，供前端录音直传）
 
 设计原则（与 tracing 一致的低耦合）：
 - OCR / STT 为可选依赖，懒加载，未安装时抛出带安装指引的友好错误
@@ -22,7 +23,7 @@ from pathlib import Path
 from typing import Dict, Optional, Any
 
 from logger import get_logger
-from services.tracing import start_span, update_current_span
+from services.tracing import start_span, update_observation
 from .document_processor import parse_resume
 
 logger = get_logger(__name__)
@@ -33,7 +34,7 @@ _DEFAULT_MODELS_DIR = _ROOT_DIR / "ai" / "models"
 
 DOCUMENT_EXTS = {".pdf", ".doc", ".docx", ".txt"}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
-AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".flac", ".ogg"}
+AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".flac", ".ogg", ".webm"}
 
 ALL_MULTIMODAL_EXTS = DOCUMENT_EXTS | IMAGE_EXTS | AUDIO_EXTS
 
@@ -45,6 +46,15 @@ _OCR_MIN_SCORE = float(os.getenv("MULTIMODAL_OCR_MIN_SCORE", "0.5"))
 _STT_MODEL_PATH = os.getenv(
     "MULTIMODAL_STT_MODEL_PATH",
     str(_DEFAULT_MODELS_DIR / "whisper" / "faster-whisper-small"),
+)
+# 中文转写引导语：whisper 未给提示时中文常输出繁体（如“經驗/響應”），
+# 用简体提示词可稳定输出简体；顺带列出简历领域术语，提升专有名词识别率。
+# 实测同一条音频：无提示 → “或是一名有三年經驗的Java後端工程師…”；
+# 加提示 → “或是一名有三年经验的Java后端工程师…”。可用环境变量整体覆盖。
+_STT_INITIAL_PROMPT = os.getenv(
+    "MULTIMODAL_STT_INITIAL_PROMPT",
+    "以下是普通话的句子。常用术语：Java、Python、前端工程师、后端工程师、"
+    "订单系统、接口响应时间、性能优化、微服务。",
 )
 
 # 懒加载单例 + 双检锁
@@ -165,12 +175,12 @@ def _ocr_image(file_path: str) -> str:
         as_type="tool",
         input={"file": Path(file_path).name},
         metadata={"engine": "rapidocr"},
-    ):
+    ) as obs:
         engine = _get_ocr_engine()
         result, _ = engine(file_path)
         if not result:
             logger.warning("OCR 未识别到文字：%s", file_path)
-            update_current_span(output={"lines": 0, "text": ""})
+            update_observation(obs, output={"lines": 0, "text": ""})
             return ""
         # result 元素：[box, text, score]
         raw_lines = [item for item in result if len(item) >= 2 and item[1]]
@@ -191,8 +201,8 @@ def _ocr_image(file_path: str) -> str:
             "图片 OCR 完成：%s，识别 %d 行（过滤低置信度 %d 行）",
             Path(file_path).name, len(lines), dropped,
         )
-        update_current_span(output={"lines": len(lines), "dropped_low_score": dropped,
-                                    "text": text[:500]})
+        update_observation(obs, output={"lines": len(lines), "dropped_low_score": dropped,
+                                        "text": text[:500]})
         return text
 
 
@@ -224,6 +234,38 @@ def _get_stt_model():
         return _stt_model
 
 
+def _decode_to_array(file_path: str, sampling_rate: int = 16000) -> "Any":
+    """用 PyAV 把音频解码成 whisper 需要的 float32 单声道数组。
+
+    faster-whisper 1.2.1 内部调用 `av.open(..., metadata_errors="ignore")`，
+    而该参数在 av>=19 已被移除（实测 av 19.0.1 直接 TypeError）。
+    这里自行解码后把 ndarray 传给 transcribe，绕开上游这段不兼容的解码分支，
+    同时不锁定 av 版本。返回约 [-1, 1] 的 float32、16kHz 单声道。
+    """
+    import av
+    import numpy as np
+
+    resampler = av.AudioResampler(format="s16", layout="mono", rate=sampling_rate)
+    chunks: list = []
+
+    def _collect(frames) -> None:
+        for frame in frames or []:
+            chunks.append(frame.to_ndarray().reshape(-1))
+
+    with av.open(file_path) as container:
+        for frame in container.decode(audio=0):
+            out = resampler.resample(frame)
+            if out is None:
+                continue
+            _collect(out if isinstance(out, list) else [out])
+        # 冲刷重采样器内部缓冲，避免丢掉尾部音频
+        _collect(resampler.resample(None))
+
+    if not chunks:
+        return np.zeros(0, dtype=np.float32)
+    return np.concatenate(chunks).astype(np.float32) / 32768.0
+
+
 def _transcribe_audio(file_path: str, language: Optional[str] = "zh") -> str:
     """语音转写文本"""
     with start_span(
@@ -231,16 +273,27 @@ def _transcribe_audio(file_path: str, language: Optional[str] = "zh") -> str:
         as_type="tool",
         input={"file": Path(file_path).name, "language": language},
         metadata={"engine": "faster-whisper"},
-    ):
+    ) as obs:
         model = _get_stt_model()
-        segments, info = model.transcribe(file_path, language=language, vad_filter=True)
+        audio = _decode_to_array(file_path)
+        if audio.size == 0:
+            logger.warning("音频解码结果为空：%s", Path(file_path).name)
+            return ""
+        segments, info = model.transcribe(
+            audio,
+            language=language,
+            vad_filter=True,
+            # 仅中文需要引导（英文/其他语言加中文提示词反而干扰识别）
+            initial_prompt=_STT_INITIAL_PROMPT if language == "zh" else None,
+        )
         text = "".join(seg.text for seg in segments).strip()
         duration = getattr(info, "duration", 0.0)
         logger.info(
             "语音转写完成：%s，语言=%s，时长=%.1fs",
             Path(file_path).name, getattr(info, "language", language), duration,
         )
-        update_current_span(output={"duration_s": duration, "text": text[:500]})
+        # 持有式更新：STT 在 asyncio.to_thread 中执行，update_current_span 会丢上下文
+        update_observation(obs, output={"duration_s": duration, "text": text[:500]})
         return text
 
 

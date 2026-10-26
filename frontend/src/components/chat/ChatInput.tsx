@@ -8,6 +8,18 @@ interface ChatInputProps {
   onFileChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
   onFileClear?: () => void;
   disabled?: boolean;
+  /** 语音输入：录音中 / 转写中 / 当前秒数 */
+  isRecording?: boolean;
+  isTranscribing?: boolean;
+  recordSeconds?: number;
+  voiceSupported?: boolean;
+  onVoiceToggle?: () => void;
+}
+
+function formatSeconds(total: number): string {
+  const mm = String(Math.floor(total / 60)).padStart(2, '0');
+  const ss = String(total % 60).padStart(2, '0');
+  return `${mm}:${ss}`;
 }
 
 const ChatInput: React.FC<ChatInputProps> = ({
@@ -17,9 +29,31 @@ const ChatInput: React.FC<ChatInputProps> = ({
   uploadedFile,
   onFileChange,
   onFileClear,
-  disabled = false
+  disabled = false,
+  isRecording = false,
+  isTranscribing = false,
+  recordSeconds = 0,
+  voiceSupported = true,
+  onVoiceToggle
 }) => {
   const blocked = disabled || isLoading;
+  const voiceDisabled = blocked || !voiceSupported || isTranscribing;
+
+  const voiceTitle = !voiceSupported
+    ? '当前浏览器不支持录音（需 localhost 或 HTTPS）'
+    : isTranscribing
+      ? '正在转写录音，请稍候'
+      : isRecording
+        ? '点击结束录音并转写（最长 60 秒）'
+        : '语音输入：点击开始录音，转写为文字后可校对';
+
+  const voiceClass = [
+    'icon-button',
+    'voice-button',
+    isRecording ? 'recording' : '',
+    isTranscribing ? 'transcribing' : '',
+    voiceDisabled && !isRecording ? 'disabled' : ''
+  ].filter(Boolean).join(' ');
 
   return (
     <div className="input-actions">
@@ -33,7 +67,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
               type="file"
               onChange={onFileChange}
               className="file-upload"
-              accept=".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg,.bmp,.webp,.mp3,.wav,.m4a,.flac,.ogg"
+              accept=".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg,.bmp,.webp,.mp3,.wav,.m4a,.flac,.ogg,.webm"
               disabled={blocked}
             />
             📎
@@ -52,6 +86,25 @@ const ChatInput: React.FC<ChatInputProps> = ({
             </div>
           )}
         </div>
+
+        <button
+          type="button"
+          className={voiceClass}
+          title={voiceTitle}
+          onClick={onVoiceToggle}
+          disabled={voiceDisabled}
+        >
+          {isTranscribing ? (
+            <span className="voice-transcribing">转写中</span>
+          ) : isRecording ? (
+            <>
+              <span className="voice-dot" />
+              {formatSeconds(recordSeconds)}
+            </>
+          ) : (
+            '🎤'
+          )}
+        </button>
       </div>
 
       {isLoading ? (
@@ -63,7 +116,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
           type="submit"
           className="send-button"
           onClick={onSubmit}
-          disabled={disabled}
+          disabled={disabled || isRecording || isTranscribing}
           title="发送（Enter）"
         >
           开始优化 ↑

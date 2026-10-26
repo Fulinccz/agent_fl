@@ -167,6 +167,12 @@ def test_magic_m4a_ftyp_at_offset():
     assert not check_file_magic(b"\x00\x00\x00\x18xxxxM4A ", "a.m4a").allowed
 
 
+def test_magic_webm_requires_ebml():
+    # 浏览器 MediaRecorder 录音输出 webm，文件头必须是 EBML
+    assert check_file_magic(b"\x1a\x45\xdf\xa3\x01\x00\x00\x00", "a.webm").allowed
+    assert not check_file_magic(b"\x89PNG\r\n\x1a\nIHDR", "a.webm").allowed
+
+
 def test_magic_text_skipped():
     assert check_file_magic(b"plain text no magic", "a.txt").allowed
     assert check_file_magic(b"# markdown", "a.md").allowed

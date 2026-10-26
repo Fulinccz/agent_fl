@@ -4,7 +4,10 @@
 
 from __future__ import annotations
 import os
-from fastapi import HTTPException, status
+from dataclasses import dataclass
+from datetime import datetime
+from fastapi import HTTPException, Request, UploadFile, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 from logger import get_logger
@@ -13,6 +16,94 @@ logger = get_logger(__name__)
 
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB
+_UPLOAD_CHUNK = 1024 * 1024        # 1MB 分块，内存占用与文件大小无关
+_MAGIC_PREFIX = 512                # 魔数只看文件头，保留前缀即可
+
+
+@dataclass
+class ReceivedUpload:
+    """上传接收结果：成功带 path/size，失败带可直接返回的 error"""
+    path: str | None = None
+    size: int = 0
+    error: JSONResponse | None = None
+
+
+def cleanup_file(file_path: str | None) -> None:
+    """删除上传的临时文件（失败不影响主流程，仅记录）"""
+    if not file_path:
+        return
+    try:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+    except OSError as e:
+        logger.warning("清理临时上传文件失败 %s：%s", file_path, e)
+
+
+async def receive_upload(
+    request: Request, file: UploadFile, allowed_exts: set[str]
+) -> ReceivedUpload:
+    """接收上传文件：扩展名白名单 → 大小限制 → 分块落盘 → 魔数校验。
+
+    成功返回 path/size；失败返回 error（临时文件已在内部清理），
+    调用方直接把 error 返回给客户端即可。落盘文件用完后由调用方 cleanup_file。
+    """
+    from services.compliance import check_file_magic
+    from services.resume_document import sanitize_filename
+
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in allowed_exts:
+        return ReceivedUpload(error=JSONResponse(
+            status_code=400,
+            content={"error": f"不支持的文件类型：{ext}，支持：{', '.join(sorted(allowed_exts))}"},
+        ))
+
+    # 声明长度超限直接拒绝（multipart 编码会有少量开销，留 1KB 余量）
+    declared = request.headers.get("content-length")
+    if declared:
+        try:
+            if int(declared) > MAX_UPLOAD_SIZE + 1024:
+                return ReceivedUpload(error=JSONResponse(
+                    status_code=413, content={"error": "上传内容过大，最大允许 10MB"}))
+        except ValueError:
+            return ReceivedUpload(error=JSONResponse(
+                status_code=400, content={"error": "非法的 Content-Length 头"}))
+
+    # 文件名消毒：防 ../ 路径穿越与 Windows 非法字符
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    file_path = os.path.join(UPLOAD_DIR, f"{timestamp}_{sanitize_filename(file.filename)}")
+
+    # 分块落盘 + 累计硬限：即使客户端不发 Content-Length 也不会被无限读入内存/磁盘
+    total_size = 0
+    magic_prefix = b""
+    try:
+        with open(file_path, "wb") as buffer:
+            while True:
+                chunk = await file.read(_UPLOAD_CHUNK)
+                if not chunk:
+                    break
+                total_size += len(chunk)
+                if total_size > MAX_UPLOAD_SIZE:
+                    buffer.close()
+                    cleanup_file(file_path)
+                    return ReceivedUpload(error=JSONResponse(
+                        status_code=413, content={"error": "文件过大，最大允许 10MB"}))
+                if len(magic_prefix) < _MAGIC_PREFIX:
+                    magic_prefix += chunk[:_MAGIC_PREFIX - len(magic_prefix)]
+                buffer.write(chunk)
+    except Exception:
+        cleanup_file(file_path)
+        raise
+
+    # 魔数校验：防改扩展名伪装（只需文件头前缀）
+    magic = check_file_magic(magic_prefix, file.filename or "")
+    if not magic.allowed:
+        cleanup_file(file_path)
+        return ReceivedUpload(error=JSONResponse(
+            status_code=magic.code, content={"error": magic.reason}))
+
+    return ReceivedUpload(path=file_path, size=total_size)
 
 
 class ChatRequest(BaseModel):

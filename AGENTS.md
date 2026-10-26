@@ -73,6 +73,8 @@ cd data/java-pipeline; mvn -q compile           # Flink 编译
 - `App.tsx` 必须解构渲染 `useStreamResponse` 的 `error`（.error-banner），否则 403/429 无展示
 - `useStreamResponse`：ref 与 state 必须同步更新；options 用 `optionsRef` 稳定回调 identity
 - 导出 `exportDocx` 带 `AbortSignal.timeout(60_000)`
+- 语音输入走「先转写、后校对」两段式：`useVoiceRecorder`（MediaRecorder，60s 上限）→ `/api/transcribe` → 文本追加进输入框，**不要**把音频塞附件槽直接跑 MAS，避免专有名词错字无校对机会
+- `getUserMedia` 需安全上下文：只能 `localhost:5173` 或 HTTPS 访问；用局域网 IP 打开时麦克风不可用（前端会提示而不会静默失败）
 
 ### 测试与目录纪律
 

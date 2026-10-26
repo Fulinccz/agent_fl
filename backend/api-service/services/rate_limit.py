@@ -17,6 +17,7 @@ LIMITS: dict[str, tuple[int, int]] = {
     "/api/auth/login": (5, 60),
     "/api/resume/optimize/stream": DEFAULT_LIMIT,
     "/api/agent/upload_stream": DEFAULT_LIMIT,
+    "/api/transcribe": DEFAULT_LIMIT,
     "/api/resume/export-docx": (20, 60),
 }
 

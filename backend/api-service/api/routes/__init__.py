@@ -9,6 +9,7 @@ from fastapi import APIRouter
 from .chat import router as chat_router
 from .resume import router as resume_router
 from .upload import router as upload_router
+from .transcribe import router as transcribe_router
 from .skill import router as skill_router
 from .auth import router as auth_router
 
@@ -18,6 +19,7 @@ router.include_router(auth_router, prefix="/auth")
 router.include_router(chat_router, prefix="/chat")
 router.include_router(resume_router, prefix="/resume")
 router.include_router(upload_router)
+router.include_router(transcribe_router)
 router.include_router(skill_router, prefix="/skill")
 
 

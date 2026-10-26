@@ -160,6 +160,7 @@ _MAGIC_SIGNS = {
     ".wav": [b"RIFF"],
     ".mp3": [b"ID3", b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"],
     ".m4a": [b"ftyp"],
+    ".webm": [b"\x1a\x45\xdf\xa3"],  # EBML 头，浏览器 MediaRecorder 录音默认输出
     ".txt": [],  # 纯文本无魔数，跳过
     ".md": [],
 }

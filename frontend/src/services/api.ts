@@ -88,6 +88,36 @@ class UploadApiClient {
       throw error;
     }
   }
+
+  /**
+   * 语音转写（录音 → 文本）
+   *
+   * 只做转写、不进入 MAS 流水线：返回文本供用户校对后再触发生成。
+   * 转写由后端本地 faster-whisper 完成，音频不出本机。
+   */
+  async transcribe(file: File): Promise<string> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${this.baseURL}/transcribe`, {
+      method: 'POST',
+      body: formData
+    });
+
+    if (!response.ok) {
+      let errorMessage = `语音转写失败（${response.status}）`;
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.error || errorData.message || errorData.detail || errorMessage;
+      } catch {
+        // 错误体非 JSON 时沿用默认文案
+      }
+      throw new Error(errorMessage);
+    }
+
+    const data = (await response.json()) as { text?: string };
+    return data.text ?? '';
+  }
 }
 
 // ==================== 简历优化多 Agent API ====================
