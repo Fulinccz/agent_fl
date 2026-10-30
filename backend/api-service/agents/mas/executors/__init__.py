@@ -6,6 +6,7 @@
 内置执行器：
 - resume_score   简历评分        （复用 ResumeScoreAgent）
 - jd_match       JD 匹配分析     （复用 JDMatchAgent）
+- interview_prep 面试攻略生成    （复用 InterviewPrepAgent）
 - resume_polish  简历润色        （复用 ResumePolishAgent，支持流式）
 - resume_parse   简历文件解析    （复用 rag.document_processor）
 - chat           通用对话        （直接调用共享 LLM，支持流式）
@@ -13,6 +14,7 @@
 from .base import BaseExecutor, _resolve_llm
 from .resume_score import ResumeScoreExecutor
 from .jd_match import JDMatchExecutor
+from .interview import InterviewPrepExecutor
 from .resume_polish import ResumePolishExecutor
 from .resume_parse import ResumeParseExecutor
 from .resume_condense import ResumeCondenseExecutor
@@ -24,6 +26,7 @@ __all__ = [
     '_resolve_llm',
     'ResumeScoreExecutor',
     'JDMatchExecutor',
+    'InterviewPrepExecutor',
     'ResumePolishExecutor',
     'ResumeParseExecutor',
     'ResumeCondenseExecutor',

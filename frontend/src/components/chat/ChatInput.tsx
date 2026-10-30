@@ -14,6 +14,10 @@ interface ChatInputProps {
   recordSeconds?: number;
   voiceSupported?: boolean;
   onVoiceToggle?: () => void;
+  /** 提交按钮文案（各页面动作不同） */
+  submitLabel?: string;
+  /** 是否已有可提交内容（简历文本或附件）：无内容时禁用提交并提示原因 */
+  hasInput?: boolean;
 }
 
 function formatSeconds(total: number): string {
@@ -34,10 +38,21 @@ const ChatInput: React.FC<ChatInputProps> = ({
   isTranscribing = false,
   recordSeconds = 0,
   voiceSupported = true,
-  onVoiceToggle
+  onVoiceToggle,
+  submitLabel = '开始优化 ↑',
+  hasInput = true
 }) => {
   const blocked = disabled || isLoading;
   const voiceDisabled = blocked || !voiceSupported || isTranscribing;
+
+  // 提交按钮被禁用的原因：无内容 / 其他页面生成中 / 语音未落定
+  const submitTitle = !hasInput
+    ? '请先填写简历或上传文件'
+    : disabled
+      ? '其他页面正在生成，请稍候'
+      : isRecording || isTranscribing
+        ? '语音处理中，请稍候'
+        : '提交';
 
   const voiceTitle = !voiceSupported
     ? '当前浏览器不支持录音（需 localhost 或 HTTPS）'
@@ -116,10 +131,10 @@ const ChatInput: React.FC<ChatInputProps> = ({
           type="submit"
           className="send-button"
           onClick={onSubmit}
-          disabled={disabled || isRecording || isTranscribing}
-          title="发送（Enter）"
+          disabled={disabled || !hasInput || isRecording || isTranscribing}
+          title={submitTitle}
         >
-          开始优化 ↑
+          {submitLabel}
         </button>
       )}
     </div>

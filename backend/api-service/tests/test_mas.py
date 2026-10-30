@@ -268,7 +268,8 @@ class TestExecutors:
     def test_registry_has_all_executors(self):
         registry = ExecutorRegistry(llm=make_mock_llm())
         assert set(registry.names()) == {
-            "resume_score", "jd_match", "resume_condense", "resume_polish", "resume_parse", "chat"
+            "resume_score", "jd_match", "resume_condense", "resume_polish", "resume_parse",
+            "interview_prep", "chat"
         }
         assert "resume_score" in registry.catalog()
 

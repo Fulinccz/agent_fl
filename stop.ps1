@@ -1,5 +1,5 @@
 ﻿# FulinAI 一键停止：按端口定位进程（8000/8080/5173），并停止 MySQL/Redis 容器
-# Langfuse 是独立 compose 项目（langfuse/），需单独 stop
+# Langfuse 是可选观测栈（默认不随 start.ps1 启动），这里一并停掉以免残留占用内存
 # llama-server(:8091) 不在停止列表——作为孤儿进程保留，下次启动 provider 直接复用（秒开）
 $root = $PSScriptRoot
 

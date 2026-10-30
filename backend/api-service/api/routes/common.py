@@ -11,6 +11,13 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 from logger import get_logger
+from agents.mas.state import (
+    IntentResult,
+    INTENT_RESUME_OPTIMIZE,
+    INTENT_RESUME_SCORE,
+    INTENT_JD_MATCH,
+    INTENT_INTERVIEW_PREP,
+)
 
 logger = get_logger(__name__)
 
@@ -133,6 +140,53 @@ class ResumeOptimizeRequest(BaseModel):
     position_type: Optional[str] = Field(None, description="职位类型：后端 / 前端 / 算法 等")
     provider: Optional[str] = Field(None, description="模型提供者：local | deepseek（不传用默认）")
     model: Optional[str] = Field(None, description="模型名称（不传用该提供者默认）")
+    intent: Optional[str] = Field(
+        None,
+        description="快捷操作显式意图：interview-prep / resume-score / jd-keyword-match"
+                    "（不传走默认的简历全流程优化）",
+    )
+    page: Optional[str] = Field(
+        None,
+        description="页面入口：analyze / generate / interview"
+                    "（决定注入的提示词、任务计划与可用执行器；不传按 intent 兼容旧调用）",
+    )
+
+
+# 快捷操作显式意图白名单：intent 值 → (意图名, 是否复杂任务, 理由)
+_QUICK_INTENTS = {
+    "interview-prep": (INTENT_INTERVIEW_PREP, False, "快捷操作：面试攻略"),
+    "resume-score": (INTENT_RESUME_SCORE, False, "快捷操作：简历评分"),
+    "jd-keyword-match": (INTENT_JD_MATCH, False, "快捷操作：JD 匹配"),
+}
+
+
+def build_preset_intent(raw: Optional[str], page: Optional[str] = None) -> IntentResult:
+    """把页面入口 / 快捷操作 intent 转成预置意图；空/未知回落简历全流程优化
+
+    页面入口优先：前端三个页面各自对应固定意图（分析 / 生成 / 面试），
+    旧调用只传 intent 时仍按快捷操作白名单映射。
+    """
+    from services.page_profiles import get_page_profile
+
+    profile = get_page_profile(page)
+    if profile is not None:
+        return IntentResult(
+            name=profile.intent, confidence=1.0, source="preset",
+            reason=f"页面入口：{profile.key}",
+            is_complex=len(profile.steps) > 1,
+        )
+
+    key = (raw or "").strip().lower()
+    if key in _QUICK_INTENTS:
+        name, is_complex, reason = _QUICK_INTENTS[key]
+        return IntentResult(
+            name=name, confidence=1.0, source="preset",
+            reason=reason, is_complex=is_complex,
+        )
+    return IntentResult(
+        name=INTENT_RESUME_OPTIMIZE, confidence=1.0, source="preset",
+        reason="简历优化端点预置意图", is_complex=True,
+    )
 
 
 class SkillExecuteRequest(BaseModel):

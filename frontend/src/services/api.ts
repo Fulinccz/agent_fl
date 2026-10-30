@@ -1,7 +1,8 @@
 import type {
   UploadRequest,
   ResumeOptimizeRequest,
-  ResumeOptimizeEvent
+  ResumeOptimizeEvent,
+  ExportDocxResult
 } from '../types';
 
 const baseUrl = (import.meta.env.VITE_API_URL as string) || '/api';
@@ -32,6 +33,10 @@ class UploadApiClient {
     if (request.jd) formData.append('jd', request.jd);
     if (request.provider) formData.append('provider', request.provider);
     if (request.model) formData.append('model', request.model);
+    // 快捷操作显式意图（面试攻略 / 评分 / JD 匹配），不传走后端默认全流程优化
+    if (request.intent) formData.append('intent', request.intent);
+    // 页面入口：分析 / 生成 / 面试，后端据此选计划与提示词
+    if (request.page) formData.append('page', request.page);
 
     try {
       // 后端 /agent/upload_stream 返回 JSON-lines 流（每行一个事件对象）
@@ -211,15 +216,16 @@ export class ResumeOptimizeApiClient {
    * 导出优化简历 docx
    *
    * 双路径：携带 file（用户上传的原始 docx）→ 服务端按内容对齐改写；
-   * 不携带 → 按内置模板重新排版生成。返回 blob 与后端建议文件名。
+   * 不携带 → 按内置模板重新排版生成。
+   * 返回可直接打开/下载的文件地址与只读预览地址。
    */
-  async exportDocx(text: string, file?: File | null): Promise<{ blob: Blob; filename: string }> {
+  async exportDocx(text: string, file?: File | null): Promise<ExportDocxResult> {
     const formData = new FormData();
     formData.append('text', text);
     if (file) formData.append('file', file);
 
     // 导出可能涉及 docx 解析与重排，加 60s 超时避免弱网下永久 pending
-    const response = await fetch(`${this.baseURL}/resume/export-docx`, {
+    const response = await fetch(`${this.baseURL}/resume/export`, {
       method: 'POST',
       body: formData,
       signal: AbortSignal.timeout(60_000)
@@ -236,17 +242,7 @@ export class ResumeOptimizeApiClient {
       throw new Error(errorMessage);
     }
 
-    const blob = await response.blob();
-    const disposition = response.headers.get('Content-Disposition') || '';
-    let filename = '简历_优化版.docx';
-    const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
-    const plainMatch = disposition.match(/filename="?([^";]+)"?/i);
-    if (utf8Match) {
-      filename = decodeURIComponent(utf8Match[1]);
-    } else if (plainMatch) {
-      filename = plainMatch[1];
-    }
-    return { blob, filename };
+    return (await response.json()) as ExportDocxResult;
   }
 }
 

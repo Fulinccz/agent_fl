@@ -33,12 +33,13 @@ class ResumePolishAgent:
             resume = state["resume"]
             jd = state.get("jd")
             extra = state.get("extra_instruction")
+            directive = state.get("directive")
 
             segments = split_text(resume, POLISH_SEGMENT_CHARS) if len(resume) > POLISH_SEGMENT_CHARS else [resume]
             parts: List[str] = []
             for idx, segment in enumerate(segments):
                 prompt = self._build_prompt(
-                    segment, jd, extra,
+                    segment, jd, extra, directive,
                     part_hint=self._part_hint(idx, len(segments)),
                 )
                 with start_span("llm-polish", as_type="generation", input=prompt[:500]) as obs:
@@ -77,6 +78,7 @@ class ResumePolishAgent:
             resume = state["resume"]
             jd = state.get("jd")
             extra = state.get("extra_instruction")
+            directive = state.get("directive")
 
             segments = split_text(resume, POLISH_SEGMENT_CHARS) if len(resume) > POLISH_SEGMENT_CHARS else [resume]
             for idx, segment in enumerate(segments):
@@ -85,7 +87,7 @@ class ResumePolishAgent:
                     yield {"type": "token", "content": "\n\n"}
 
                 prompt = self._build_prompt(
-                    segment, jd, extra,
+                    segment, jd, extra, directive,
                     part_hint=self._part_hint(idx, len(segments)),
                 )
 
@@ -118,11 +120,13 @@ class ResumePolishAgent:
         resume: str,
         jd: Optional[str] = None,
         extra_instruction: Optional[str] = None,
+        directive: Optional[str] = None,
         part_hint: str = "",
     ) -> str:
         """构建润色 prompt - 简化版，适合小模型（输入应为已切分的单段）"""
         jd_hint = f"目标岗位：{jd[:500]}\n\n" if jd else ""
         extra_hint = f"\n用户特别要求：{extra_instruction[:300]}\n" if extra_instruction else ""
+        directive_hint = f"\n本次入口要求：{directive[:300]}\n" if directive else ""
 
         return f"""{jd_hint}请优化以下简历描述，使其更专业：
 
@@ -132,7 +136,7 @@ class ResumePolishAgent:
 - 用"主导"、"设计"、"优化"替换"做"、"负责"
 - 添加数字，如"提升30%"、"完成5个"
 - 突出技术难点
-
+{directive_hint}
 重要：只输出优化后的简历内容，不要添加任何标题、说明、角色标记（如user/assistant）或额外内容。
 直接输出优化后的描述："""
 

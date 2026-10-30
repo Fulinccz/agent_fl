@@ -101,6 +101,8 @@ class MasterOrchestrator:
                 final_state["score"] = event.get("data")
             elif etype == "suggestions":
                 final_state["suggestions"] = event.get("data")
+            elif etype == "interview":
+                final_state["interview_guide"] = event.get("data", {}).get("interview_guide")
             elif etype == "error":
                 final_state["error"] = event.get("message")
             elif etype == "complete":
@@ -445,12 +447,15 @@ class MasterOrchestrator:
             logger.warning("[MasterOrchestrator] 重规划次数用尽，跳过失败步骤")
             return False, False, replans, None
         replans += 1
+        from services.page_profiles import page_agents
         new_plan = self.master_agent.replan(
             goal=plan.goal,
             trace=blackboard.trace_lines(),
             failed_step_id=step.step_id,
             error=result.error or result.summary,
             feedback=reflection.feedback,
+            # 重规划同样受页面执行器白名单约束
+            allowed_agents=page_agents(blackboard.inputs.get("page")),
         )
         new_steps = new_plan.steps if new_plan is not None else None
         if new_steps and self._apply_replan(plan, new_steps, failed=step):
@@ -510,10 +515,14 @@ class MasterOrchestrator:
         accumulated = ""
         last_yielded = 0
         has_error = ""
+        interview_guide: Optional[Dict[str, Any]] = None
 
         for chunk in executor.run_stream(task_input):
             ctype = chunk.get("type")
-            if ctype == "token":
+            if ctype == "heartbeat":
+                # 长任务保活：维度生成期间也持续写字节，避免代理判定连接空闲
+                yield chunk
+            elif ctype == "token":
                 content = chunk.get("content", "")
                 accumulated += content
                 if executor.name == "chat":
@@ -530,12 +539,27 @@ class MasterOrchestrator:
             elif ctype == "thought":
                 # ReAct 步内思考事件：实时透传给前端
                 yield chunk
+            elif ctype == "interview":
+                # 面试题库增量：每完成一个维度就推一份，前端可先渲染已有维度
+                interview_guide = chunk.get("data", {}).get("interview_guide")
+                yield chunk
             elif ctype == "error":
                 has_error = chunk.get("content", "生成错误")
 
-        if has_error and not accumulated:
+        if has_error and not accumulated and interview_guide is None:
             return StepResult(
                 step_id=step.step_id, agent=step.agent, success=False, error=has_error
+            )
+
+        if executor.name == "interview_prep":
+            guide = interview_guide or {}
+            count = len(guide.get("questions") or [])
+            return StepResult(
+                step_id=step.step_id, agent=step.agent,
+                success=bool(count),
+                data={"interview_guide": guide},
+                summary=f"生成 {count} 个高频面试问题",
+                error="" if count else "面试问题为空",
             )
 
         if executor.name == "resume_polish":
@@ -593,6 +617,10 @@ class MasterOrchestrator:
                 "condensed_resume": result.data.get("condensed_resume"),
                 "original_length": result.data.get("original_length"),
                 "condensed_length": result.data.get("condensed_length"),
+            }}
+        elif step.agent == "interview_prep":
+            yield {"type": "interview", "data": {
+                "interview_guide": result.data.get("interview_guide"),
             }}
 
     def _apply_replan(
@@ -664,6 +692,7 @@ class MasterOrchestrator:
             "suggestions": "suggestions",
             "match_analysis": "match_result",
             "optimized_resume": "optimized_resume",
+            "interview_guide": "interview_guide",
         }
         for out_key, snap_key in artifact_map.items():
             if snapshot.get(snap_key) is not None:

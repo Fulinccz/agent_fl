@@ -52,9 +52,12 @@ class ResumeScoreAgent:
             jd = (state.get("jd") or "").strip()
             jd_section = f"\n【目标岗位 JD】\n{jd[:500]}\n" if jd else ""
             profile = COMPLEXITY_PROFILES[self._assess_complexity(resume)]
+            # 页面入口指令：分析页只做诊断，不输出改写稿
+            directive = str(state.get("directive") or "").strip()
+            directive_block = f"\n【本次入口要求】{directive}\n" if directive else ""
 
             prompt = f"""请对以下简历进行评分：
-
+{directive_block}
 【简历内容】
 {resume[:2000]}
 {jd_section}
@@ -87,8 +90,9 @@ class ResumeScoreAgent:
             overall_score = sum(scores.values()) / len(scores)
 
             state["score_result"] = scores
+            # 每个维度都要有「现状评估 + 改进建议」：LLM 漏写的项按分数档位补齐
             state["dimension_analysis"] = {
-                k: analysis.get(k) or self._fallback_analysis(scores.get(k, 0))
+                k: self._merge_analysis(analysis.get(k), scores.get(k, 0))
                 for k in scores
             }
             state["overall_score"] = {
@@ -255,21 +259,50 @@ class ResumeScoreAgent:
                     return ResumeScoreAgent._normalize_analysis_item(inner, a_cap, s_cap)
             except Exception:
                 pass
-            return {"assessment": v.strip()[:a_cap], "suggestion": ""}
+            return {"assessment": ResumeScoreAgent._clip_text(v.strip(), a_cap), "suggestion": ""}
         if isinstance(v, dict):
             assessment = str(v.get("assessment") or v.get("现状") or v.get("analysis") or "").strip()
             suggestion = str(v.get("suggestion") or v.get("建议") or v.get("advice") or "").strip()
             if assessment or suggestion:
-                return {"assessment": assessment[:a_cap], "suggestion": suggestion[:s_cap]}
+                return {
+                    "assessment": ResumeScoreAgent._clip_text(assessment, a_cap),
+                    "suggestion": ResumeScoreAgent._clip_text(suggestion, s_cap),
+                }
         if isinstance(v, (int, float)) and str(v).strip():
-            return {"assessment": str(v).strip()[:a_cap], "suggestion": ""}
+            return {"assessment": ResumeScoreAgent._clip_text(str(v).strip(), a_cap), "suggestion": ""}
         return {}
+
+    @staticmethod
+    def _clip_text(text: str, limit: int) -> str:
+        """按上限截断，优先在句末标点收尾，避免界面出现半句话"""
+        if len(text) <= limit:
+            return text
+        head = text[:limit]
+        for marks in ("。！？", "；", "，"):
+            cut = max(head.rfind(ch) for ch in marks)
+            if cut >= limit // 2:
+                return head[:cut + 1]
+        return head.rstrip("，、；; ") + "…"
+
+    @staticmethod
+    def _merge_analysis(item: Optional[Dict[str, str]], score: int) -> Dict[str, str]:
+        """分析缺失项用分数档位兜底补齐：保证每个维度都有现状评估与改进建议"""
+        fallback = ResumeScoreAgent._fallback_analysis(score)
+        if not item:
+            return fallback
+        return {
+            "assessment": item.get("assessment") or fallback["assessment"],
+            "suggestion": item.get("suggestion") or fallback["suggestion"],
+        }
 
     @staticmethod
     def _fallback_analysis(score: int) -> Dict[str, str]:
         """LLM 分析缺失时按分数档位生成兜底分析（现状 + 建议）"""
         if score >= 85:
-            return {"assessment": "该维度表现出色，内容充分且表述专业。", "suggestion": ""}
+            return {
+                "assessment": "该维度表现出色，内容充分且表述专业。",
+                "suggestion": "保持当前写法，可再补充一项量化成果巩固优势。",
+            }
         if score >= 70:
             return {"assessment": "该维度表现良好，仍有小幅提升空间。", "suggestion": "可补充量化数据或关键成果，进一步增强说服力。"}
         if score >= 60:

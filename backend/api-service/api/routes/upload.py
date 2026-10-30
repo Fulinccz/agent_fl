@@ -19,8 +19,7 @@ from logger import get_logger
 from services.compliance import check_text
 from services.rate_limit import check_rate_limit
 from rag.multimodal import parse_multimodal, ALL_MULTIMODAL_EXTS, MultimodalDependencyError
-from agents.mas.state import IntentResult, INTENT_RESUME_OPTIMIZE
-from .common import cleanup_file, receive_upload
+from .common import cleanup_file, receive_upload, build_preset_intent
 
 router = APIRouter(tags=["上传"])
 logger = get_logger(__name__)
@@ -58,7 +57,9 @@ async def upload_file_stream(
     query: str = Form(""),
     jd: str | None = Form(None),
     provider: str = Form("local"),
-    model: str | None = Form(None)
+    model: str | None = Form(None),
+    intent: str = Form(""),
+    page: str = Form("")
 ):
     call_time = datetime.now().strftime('%H:%M:%S')
     file_path = None
@@ -117,14 +118,9 @@ async def upload_file_stream(
         cleanup_file(file_path)
         file_path = None
 
-        # 预置意图：上传简历场景意图明确，跳过意图识别
-        preset_intent = IntentResult(
-            name=INTENT_RESUME_OPTIMIZE,
-            confidence=1.0,
-            source="preset",
-            reason="上传文件简历优化预置意图",
-            is_complex=True,
-        )
+        # 预置意图：上传简历场景意图明确，跳过意图识别；
+        # 页面入口（分析/生成/面试）优先，旧调用按 intent 快捷操作映射，未知值回落全流程优化
+        preset_intent = build_preset_intent(intent, page)
 
         context: dict = {"resume": recognized_text}
         if jd:
@@ -136,11 +132,20 @@ async def upload_file_stream(
             context["provider"] = provider
         if model:
             context["model"] = model
+        from services.page_profiles import apply_page_context
+        apply_page_context(context, page)
 
         async def event_stream():
             try:
                 from api.routes.deps import get_master_orchestrator
                 orchestrator = get_master_orchestrator()
+
+                # 解析结果先回填前端输入框：三个页面共用同一份简历文本，
+                # 用户切页后不必重新上传
+                yield json.dumps(
+                    {"type": "resume_parsed", "data": {"text": recognized_text}},
+                    ensure_ascii=False,
+                ) + "\n"
 
                 async for event in iterate_in_threadpool(
                     orchestrator.run_stream("", context, preset_intent)

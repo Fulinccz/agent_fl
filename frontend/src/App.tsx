@@ -1,225 +1,162 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import './App.css';
 
-import { ChatInput, SkillRouteBadge } from './components/chat';
 import { Modal } from './components/common';
-import { useAbortController, useSubmitControl } from './hooks/useAbortController';
-import { useStreamResponse } from './hooks/useStreamResponse';
-import { useFileUpload } from './hooks/useFileUpload';
-import { useSkillRouter } from './hooks/useSkillRouter';
-import { useVoiceRecorder } from './hooks/useVoiceRecorder';
-import { agentService } from './services/agentService';
+import { useSubmitControl } from './hooks/useAbortController';
+import { useStreamResponse, type UseStreamResponseReturn } from './hooks/useStreamResponse';
+import { ProfileProvider } from './pages/ProfileProvider';
+import { useProfile } from './pages/profile-context';
+import ProfileForm from './pages/ProfileForm';
+import AnalyzePage from './pages/AnalyzePage';
+import GeneratePage from './pages/GeneratePage';
+import InterviewPage from './pages/InterviewPage';
+import type { PageKey } from './types';
 import Logo from './assets/readyInClient/react.svg';
 
-/** 评分档位 → 配色 */
-const RATING_STYLES: Record<string, { color: string; bg: string }> = {
-  '优秀': { color: '#16a34a', bg: 'rgba(22, 163, 74, 0.12)' },
-  '良好': { color: '#2563eb', bg: 'rgba(37, 99, 235, 0.12)' },
-  '一般': { color: '#d97706', bg: 'rgba(217, 119, 6, 0.12)' },
-  '较差': { color: '#dc2626', bg: 'rgba(220, 38, 38, 0.12)' },
-};
+/** 顶部三页入口：hash 路由，不引入 react-router */
+const PAGE_TABS: { key: PageKey; label: string; icon: string }[] = [
+  { key: 'analyze', label: '简历分析', icon: '📊' },
+  { key: 'generate', label: '简历生成', icon: '✨' },
+  { key: 'interview', label: '面试攻略', icon: '💼' },
+];
 
-const DIMENSION_LABELS: Record<string, string> = {
-  completeness: '完整性',
-  professionalism: '专业度',
-  quantification: '量化程度',
-  matching: '匹配度',
-};
+const PAGE_KEYS = PAGE_TABS.map((tab) => tab.key);
 
-function scoreColor(v: number) {
-  return v >= 80 ? '#16a34a' : v >= 60 ? '#d97706' : '#dc2626';
+function readPageFromHash(): PageKey {
+  const key = window.location.hash.replace(/^#\/?/, '');
+  return (PAGE_KEYS as string[]).includes(key) ? (key as PageKey) : 'analyze';
 }
 
-const PIPELINE_STEPS = [
-  { key: 'score', label: '评分', icon: '📊', agent: 'resume_score' },
-  { key: 'suggestions', label: '匹配', icon: '🎯', agent: 'jd_match' },
-  { key: 'condense', label: '精简', icon: '✂️', agent: 'resume_condense' },
-  { key: 'polished', label: '润色', icon: '✨', agent: 'resume_polish' },
-] as const;
-
-function App() {
+/**
+ * 三页工作台
+ *
+ * - 输入（简历 / JD / 附件 / 语音）来自 ProfileContext，三页共用一份
+ * - 结果按页分桶：每页一个 useStreamResponse，页面常驻挂载（hidden 切换），
+ *   切页既不断流也不互相清空
+ * - 全局同一时刻只允许一条推理流，避免本地 llama-server 队列堵塞
+ */
+function Workspace() {
+  const profile = useProfile();
+  const [page, setPage] = useState<PageKey>(readPageFromHash);
   const [showNewChatModal, setShowNewChatModal] = useState(false);
-  const [query, setQuery] = useState('');
-  const [jd, setJd] = useState('');
-  const [modelProvider, setModelProvider] = useState('deepseek');
-  const [copied, setCopied] = useState(false);
-  const [voiceError, setVoiceError] = useState('');
-  const [exportState, setExportState] = useState<{
-    status: 'idle' | 'generating' | 'ready' | 'error';
-    url?: string;
-    filename?: string;
-    size?: number;
-    error?: string;
-  }>({ status: 'idle' });
-  const exportedKeyRef = useRef('');
-  const lastUploadedFileRef = useRef<File | null>(null);
-
-  const { create, abort, reset: resetAbort } = useAbortController();
+  // 新对话时递增：作为 GeneratePage 的 key，重挂载清空导出状态与 blob URL
+  const [resetToken, setResetToken] = useState(0);
+  // 生成页的原文对照：记录提交那一刻的简历文本与原始文件
+  const [generateSource, setGenerateSource] = useState<{ text: string; file: File | null }>({
+    text: '',
+    file: null
+  });
+  // 分析页的匹配卡只在「提交时确实带了 JD」的这一轮出现
+  const [analyzeJd, setAnalyzeJd] = useState('');
+  const controllerRef = useRef<AbortController | null>(null);
+  // 生成页上传提交时，等 resume_parsed 回来后补全原文对照
+  const pendingGenerateTextRef = useRef(false);
   const { canSubmit, markSubmitting, recordStopTime } = useSubmitControl();
 
-  const {
-    score,
-    suggestions,
-    polished,
-    condensed,
-    error,
-    isStreaming,
-    activeAgents,
-    elapsed,
-    thoughts,
-    startStream,
-    startUpload,
-    clearOutput
-  } = useStreamResponse();
-
-  const { uploadedFile, handleFileSelect, clearFile } = useFileUpload();
-
-  // 语音输入：录音 → 后端本地 Whisper 转写 → 追加到简历输入框（不覆盖已有内容）
-  const {
-    state: voiceState,
-    seconds: voiceSeconds,
-    supported: voiceSupported,
-    toggle: toggleVoice
-  } = useVoiceRecorder({
-    onText: (text) => {
-      setVoiceError('');
-      setQuery((prev) => (prev.trim() ? `${prev.trimEnd()}\n${text}` : text));
-    },
-    onError: (message) => setVoiceError(message)
-  });
-
-  const { routeState, routeIntent, clearRoute } = useSkillRouter({
-    onRoute: () => {},
-    onError: (error) => {
-      console.error('[SkillRouter] 路由错误:', error);
+  const handleResumeParsed = (text: string) => {
+    profile.backfillResume(text);
+    if (pendingGenerateTextRef.current) {
+      pendingGenerateTextRef.current = false;
+      setGenerateSource((prev) => ({ ...prev, text }));
     }
-  });
+  };
 
-  const handleSubmit = useCallback(async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
+  const analyzeStream = useStreamResponse({ onResumeParsed: handleResumeParsed });
+  const generateStream = useStreamResponse({ onResumeParsed: handleResumeParsed });
+  const interviewStream = useStreamResponse({ onResumeParsed: handleResumeParsed });
 
+  const streams: Record<PageKey, UseStreamResponseReturn> = {
+    analyze: analyzeStream,
+    generate: generateStream,
+    interview: interviewStream
+  };
+
+  useEffect(() => {
+    const sync = () => setPage(readPageFromHash());
+    window.addEventListener('hashchange', sync);
+    if (!window.location.hash) window.location.replace('#/analyze');
+    return () => window.removeEventListener('hashchange', sync);
+  }, []);
+
+  const navigate = (key: PageKey) => {
+    if (window.location.hash === `#/${key}`) {
+      setPage(key);
+      return;
+    }
+    window.location.hash = `#/${key}`;
+  };
+
+  const streamingPage = PAGE_KEYS.find((key) => streams[key].isStreaming) ?? null;
+  const hasInput = profile.query.trim() !== '' || !!profile.uploadedFile;
+
+  const submit = async (target: PageKey) => {
+    if (streamingPage !== null) return;
     if (!canSubmit()) return;
     // 录音中/转写中不提交，避免把未落定的语音内容送进流水线
-    if (voiceState !== 'idle') return;
+    if (profile.voiceState !== 'idle') return;
     // 粘贴链路必须有简历文本；上传链路文本作为可选补充要求
-    if (!query.trim() && !uploadedFile) return;
+    if (!hasInput) return;
 
     markSubmitting(true);
-    clearOutput();
-    clearRoute();
-    setCopied(false);
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    const stream = streams[target];
 
-    const controller = create();
+    if (target === 'generate') {
+      // 上传链路先记文件，原文对照等 resume_parsed 回来再补文本
+      pendingGenerateTextRef.current = !!profile.uploadedFile;
+      setGenerateSource({
+        text: profile.uploadedFile ? '' : profile.query,
+        file: profile.uploadedFile
+      });
+    }
+    if (target === 'analyze') {
+      setAnalyzeJd(profile.jd);
+    }
 
     try {
-      await routeIntent(query, modelProvider);
-
-      if (uploadedFile) {
-        // 记录原始文件，供导出时走"原 docx 对齐改写"路径；
-        // 上传解析后进入与粘贴链路相同的 MAS 事件流（评分/匹配/精简/润色）
-        lastUploadedFileRef.current = uploadedFile;
-        await startUpload({
-          file: uploadedFile,
-          query: query.trim() || undefined,
-          jd: jd.trim() || undefined,
-          provider: modelProvider
+      if (profile.uploadedFile) {
+        // 上传解析后进入与粘贴链路相同的 MAS 事件流；文件保留在三页输入中
+        await stream.startUpload({
+          file: profile.uploadedFile,
+          // 自动回填的简历正文不作为"补充要求"，避免润色提示词里重复整份简历
+          query: profile.queryAutoFilled ? undefined : profile.query.trim() || undefined,
+          jd: profile.jd.trim() || undefined,
+          provider: profile.provider,
+          page: target
         }, controller.signal);
       } else {
-        lastUploadedFileRef.current = null;
-        await startStream({
-          resume: query,
-          jd: jd || undefined,
-          provider: modelProvider
+        await stream.startStream({
+          resume: profile.query,
+          jd: profile.jd.trim() || undefined,
+          provider: profile.provider,
+          page: target
         }, controller.signal);
       }
-    } catch (error) {
-      if (error instanceof Error && error.name !== 'AbortError') {
-        console.error('Error:', error);
-      }
     } finally {
+      if (controllerRef.current === controller) controllerRef.current = null;
       markSubmitting(false);
-      clearFile();
     }
-  }, [query, jd, modelProvider, uploadedFile, canSubmit, markSubmitting, clearOutput, create, startStream, startUpload, clearFile, routeIntent, clearRoute, voiceState]);
+  };
 
-  const handleStop = useCallback(() => {
+  const stop = () => {
     recordStopTime();
-    abort();
-  }, [abort, recordStopTime]);
+    controllerRef.current?.abort();
+  };
 
-  const confirmNewChat = useCallback(() => {
-    setQuery('');
-    setJd('');
-    setVoiceError('');
-    clearOutput();
-    clearFile();
-    resetAbort();
-    lastUploadedFileRef.current = null;
-    exportedKeyRef.current = '';
-    setExportState(prev => {
-      if (prev.url) URL.revokeObjectURL(prev.url);
-      return { status: 'idle' };
-    });
+  const confirmNewChat = () => {
+    controllerRef.current?.abort();
+    controllerRef.current = null;
+    analyzeStream.clearOutput();
+    generateStream.clearOutput();
+    interviewStream.clearOutput();
+    profile.resetInputs();
+    setGenerateSource({ text: '', file: null });
+    setAnalyzeJd('');
+    pendingGenerateTextRef.current = false;
+    setResetToken((token) => token + 1);
     setShowNewChatModal(false);
-  }, [clearOutput, clearFile, resetAbort]);
-
-  const polishedText = polished?.optimized_resume ?? '';
-  const scoreValue = score?.overall_score?.score;
-  const rating = score?.overall_score?.rating ?? '';
-  const ratingStyle = RATING_STYLES[rating] ?? { color: '#4f5bd5', bg: 'rgba(79, 91, 213, 0.12)' };
-  const dimensionAnalysis = (score?.dimension_analysis ?? {}) as Record<
-    string,
-    { assessment?: string; suggestion?: string } | string
-  >;
-
-  const handleCopy = useCallback(async () => {
-    if (!polishedText) return;
-    try {
-      await navigator.clipboard.writeText(polishedText);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      console.error('复制失败');
-    }
-  }, [polishedText]);
-
-  const handleExport = useCallback(async () => {
-    if (!polishedText) return;
-    setExportState(prev => {
-      if (prev.url) URL.revokeObjectURL(prev.url);
-      return { status: 'generating' };
-    });
-    try {
-      const { blob, filename } = await agentService.exportDocx(
-        polishedText,
-        lastUploadedFileRef.current
-      );
-      const url = URL.createObjectURL(blob);
-      setExportState({ status: 'ready', url, filename, size: blob.size });
-    } catch (e: unknown) {
-      const msg = e instanceof Error
-        ? (e.name === 'TimeoutError' ? '文档生成超时（60s），请重试' : e.message)
-        : '文档生成失败';
-      setExportState({ status: 'error', error: msg });
-    }
-  }, [polishedText]);
-
-  // 润色完成后自动生成一次优化文档（相同结果不重复生成）
-  useEffect(() => {
-    if (isStreaming || !polishedText) return;
-    const key = `${lastUploadedFileRef.current?.name ?? ''}|${polishedText.length}|${polishedText.slice(-32)}`;
-    if (exportedKeyRef.current === key) return;
-    exportedKeyRef.current = key;
-    handleExport();
-  }, [isStreaming, polishedText, handleExport]);
-
-  const handleDownload = useCallback(() => {
-    if (!exportState.url) return;
-    const a = document.createElement('a');
-    a.href = exportState.url;
-    a.download = exportState.filename || '简历_优化版.docx';
-    a.click();
-  }, [exportState]);
+  };
 
   return (
     <div className="app">
@@ -231,20 +168,38 @@ function App() {
             <span className="brand-sub">简历优化助手</span>
           </div>
         </div>
+
+        <nav className="page-tabs" role="tablist" aria-label="功能页面">
+          {PAGE_TABS.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              role="tab"
+              aria-selected={page === tab.key}
+              className={`page-tab${page === tab.key ? ' active' : ''}`}
+              onClick={() => navigate(tab.key)}
+            >
+              <span className="page-tab-icon">{tab.icon}</span>
+              {tab.label}
+              {streams[tab.key].isStreaming && <span className="page-tab-dot" />}
+            </button>
+          ))}
+        </nav>
+
         <div className="topbar-actions">
           <div className="model-switch" role="tablist" aria-label="模型选择">
             <button
               type="button"
-              className={`model-option${modelProvider === 'deepseek' ? ' active' : ''}`}
-              onClick={() => setModelProvider('deepseek')}
+              className={`model-option${profile.provider === 'deepseek' ? ' active' : ''}`}
+              onClick={() => profile.setProvider('deepseek')}
             >
               DeepSeek
               <span className="model-tag">在线</span>
             </button>
             <button
               type="button"
-              className={`model-option${modelProvider === 'local' ? ' active' : ''}`}
-              onClick={() => setModelProvider('local')}
+              className={`model-option${profile.provider === 'local' ? ' active' : ''}`}
+              onClick={() => profile.setProvider('local')}
             >
               本地 Qwen
               <span className="model-tag muted">离线</span>
@@ -257,240 +212,70 @@ function App() {
       </header>
 
       <main className="workspace">
-        {/* 左列：输入 + 优化结果 */}
-        <section className="main-col">
-          <form className="card input-card" onSubmit={(e) => handleSubmit(e)}>
-            <textarea
-              className="resume-input"
-              placeholder="粘贴简历内容，或点击左下角上传文档 / 图片 / 音频…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              disabled={isStreaming}
-              rows={7}
-            />
-            <div className="jd-block">
-              <label className="jd-label" htmlFor="jd-input">目标岗位 JD（可选）</label>
-              <textarea
-                id="jd-input"
-                className="jd-input"
-                placeholder="粘贴职位描述，匹配分析将围绕它展开"
-                value={jd}
-                onChange={(e) => setJd(e.target.value)}
-                disabled={isStreaming}
-                rows={4}
+        {PAGE_KEYS.map((key) => {
+          const stream = streams[key];
+          const isCurrent = key === page;
+          return (
+            <section
+              key={key}
+              className="page-panel"
+              role="tabpanel"
+              hidden={!isCurrent}
+              aria-hidden={!isCurrent}
+            >
+              <ProfileForm
+                page={key}
+                isStreaming={stream.isStreaming}
+                blockedByOther={streamingPage !== null && streamingPage !== key}
+                onSubmit={() => { void submit(key); }}
+                onStop={stop}
               />
-            </div>
-            <ChatInput
-              onSubmit={() => handleSubmit()}
-              onStop={handleStop}
-              isLoading={isStreaming}
-              uploadedFile={uploadedFile}
-              onFileChange={handleFileSelect}
-              onFileClear={clearFile}
-              disabled={!canSubmit() && isStreaming}
-              isRecording={voiceState === 'recording'}
-              isTranscribing={voiceState === 'transcribing'}
-              recordSeconds={voiceSeconds}
-              voiceSupported={voiceSupported}
-              onVoiceToggle={toggleVoice}
-            />
-          </form>
 
-          <SkillRouteBadge routeState={routeState} />
-
-          {voiceError && (
-            <div className="error-banner" role="alert">
-              <span className="error-banner-icon">🎤</span>
-              <span className="error-banner-text">{voiceError}</span>
-              <button
-                type="button"
-                className="error-banner-close"
-                onClick={() => setVoiceError('')}
-                title="关闭"
-              >
-                ✕
-              </button>
-            </div>
-          )}
-
-          {error && (
-            <div className="error-banner" role="alert">
-              <span className="error-banner-icon">⚠️</span>
-              <span className="error-banner-text">{error}</span>
-            </div>
-          )}
-
-          {/* 简历评分（维度分析含改进建议） */}
-          <div className="card score-card">
-            <div className="card-head">
-              <span className="card-title">简历评分</span>
-            </div>
-            <div className="card-body score-body">
-              {score && scoreValue != null ? (
-                <div className="score-wrap">
-                  <div className="score-left">
-                    <div
-                      className="score-ring"
-                      style={{
-                        background: `conic-gradient(${ratingStyle.color} ${Math.min(100, Number(scoreValue)) * 3.6}deg, var(--border) 0deg)`
-                      }}
-                    >
-                      <div className="score-ring-inner">
-                        <span className="score-number">{scoreValue}</span>
-                      </div>
-                    </div>
-                    <span className="rating-chip" style={{ color: ratingStyle.color, background: ratingStyle.bg }}>
-                      {rating || '—'}
-                    </span>
-                    {score.overall_score?.description && (
-                      <p className="score-overall-desc">{score.overall_score.description}</p>
-                    )}
-                  </div>
-                  {score.scores && typeof score.scores === 'object' && (
-                    <div className="score-dimensions">
-                      {Object.entries(score.scores).map(([key, val]) => {
-                        const label = DIMENSION_LABELS[key] || key;
-                        const v = Number(val) || 0;
-                        const color = scoreColor(v);
-                        const item = dimensionAnalysis[key];
-                        const assessment = typeof item === 'string' ? item : item?.assessment;
-                        const suggestion = typeof item === 'string' ? '' : item?.suggestion;
-                        return (
-                          <div key={key} className="dim-block">
-                            <div className="dim-row">
-                              <span className="dim-label">{label}</span>
-                              <div className="dim-bar-track">
-                                <div className="dim-bar-fill" style={{ width: `${v}%`, background: color }} />
-                              </div>
-                              <span className="dim-value" style={{ color }}>{v}</span>
-                            </div>
-                            {assessment && <p className="dim-analysis">{assessment}</p>}
-                            {suggestion && (
-                              <p className="dim-suggestion">
-                                <span className="dim-suggestion-icon">💡</span>
-                                {suggestion}
-                              </p>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="empty-state compact">
-                  <span className="empty-icon">📊</span>
-                  <p className="empty-sub">发送简历后出分</p>
+              {isCurrent && profile.voiceError && (
+                <div className="error-banner" role="alert">
+                  <span className="error-banner-icon">🎤</span>
+                  <span className="error-banner-text">{profile.voiceError}</span>
+                  <button
+                    type="button"
+                    className="error-banner-close"
+                    onClick={() => profile.setVoiceError('')}
+                    title="关闭"
+                  >
+                    ✕
+                  </button>
                 </div>
               )}
-            </div>
-          </div>
 
-          <div className="card result-card">
-            <div className="card-head">
-              <span className="card-title">优化结果</span>
-              <div className="card-head-actions">
-                {isStreaming && <span className="streaming-hint">生成中<span className="dot-pulse" /></span>}
-                {polishedText && (
-                  <button type="button" className="ghost-button small" onClick={handleCopy}>
-                    {copied ? '已复制 ✓' : '复制全文'}
+              {isCurrent && stream.error && (
+                <div className="error-banner" role="alert">
+                  <span className="error-banner-icon">⚠️</span>
+                  <span className="error-banner-text">{stream.error}</span>
+                  <button
+                    type="button"
+                    className="error-banner-close"
+                    onClick={stream.clearError}
+                    title="关闭"
+                  >
+                    ✕
                   </button>
-                )}
-              </div>
-            </div>
-            {thoughts.length > 0 && (
-              <details className="thought-panel">
-                <summary>思考过程（{thoughts.length}）</summary>
-                {thoughts.map((t, i) => (
-                  <p key={i} className="thought-item">{t}</p>
-                ))}
-              </details>
-            )}
-            {(isStreaming || score || suggestions || polished) && (
-              <div className="pipeline-bar">
-                {PIPELINE_STEPS
-                  // 精简为条件步骤：仅在触发（活跃或已完成）时显示
-                  .filter(step => step.key !== 'condense' || !!condensed || activeAgents.has(step.agent))
-                  .map((step, i, arr) => {
-                    const arrived = step.key === 'score' ? !!score
-                      : step.key === 'suggestions' ? !!suggestions
-                      : step.key === 'condense' ? !!condensed
-                      : !!polished;
-                    const isActive = isStreaming && !arrived && activeAgents.has(step.agent);
-                    const isCurrent = isStreaming && !arrived && !isActive && (
-                      i === 0 ? true : !!({
-                        score: !!score,
-                        suggestions: !!suggestions,
-                        condense: !!condensed,
-                        polished: !!polished,
-                      }[arr[i - 1].key])
-                    );
-                    return (
-                      <React.Fragment key={step.key}>
-                        <div className={`pipeline-step${arrived ? ' done' : ''}${(isActive || isCurrent) ? ' active' : ''}`}>
-                          <span className="step-icon">{arrived ? '✓' : step.icon}</span>
-                          <span className="step-label">{step.label}</span>
-                        </div>
-                        {i < arr.length - 1 && <div className="pipeline-connector" />}
-                      </React.Fragment>
-                    );
-                  })}
-                {elapsed != null && !isStreaming && (
-                  <span className="pipeline-elapsed">{elapsed}s</span>
-                )}
-              </div>
-            )}
-            <div className="card-body result-body">
-              {polishedText ? (
-                <pre className="result-text">{polishedText}</pre>
-              ) : (
-                <div className="empty-state">
-                  <span className="empty-icon">✨</span>
-                  <p className="empty-title">优化后的简历将在这里流式输出</p>
-                  <p className="empty-sub">在上方输入简历内容，选择模型后点击发送</p>
                 </div>
               )}
-            </div>
-          </div>
 
-          {exportState.status !== 'idle' && (
-            <div className="card export-card">
-              <div className="card-head">
-                <span className="card-title">优化文档</span>
-                {exportState.status === 'ready' && (
-                  <button type="button" className="export-regen" onClick={handleExport}>
-                    重新生成
-                  </button>
-                )}
-              </div>
-              <div className="card-body">
-                {exportState.status === 'generating' && (
-                  <div className="export-generating">
-                    正在生成优化文档<span className="dot-pulse" />
-                  </div>
-                )}
-                {exportState.status === 'ready' && (
-                  <div className="doc-entry">
-                    <span className="doc-icon">📄</span>
-                    <div className="doc-info">
-                      <span className="doc-name">{exportState.filename}</span>
-                      <span className="doc-size">{Math.max(1, Math.round((exportState.size ?? 0) / 1024))} KB</span>
-                    </div>
-                    <button type="button" className="export-download" onClick={handleDownload}>
-                      下载 .docx
-                    </button>
-                  </div>
-                )}
-                {exportState.status === 'error' && (
-                  <div className="export-error">
-                    <span>文档生成失败：{exportState.error}</span>
-                    <button type="button" className="export-retry" onClick={handleExport}>重试</button>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </section>
+              {key === 'analyze' && <AnalyzePage stream={stream} hasJd={analyzeJd.trim() !== ''} />}
+
+              {key === 'generate' && (
+                <GeneratePage
+                  key={resetToken}
+                  stream={stream}
+                  sourceText={generateSource.text}
+                  sourceFile={generateSource.file}
+                />
+              )}
+
+              {key === 'interview' && <InterviewPage stream={stream} />}
+            </section>
+          );
+        })}
       </main>
 
       <Modal
@@ -498,11 +283,19 @@ function App() {
         onClose={() => setShowNewChatModal(false)}
         onConfirm={confirmNewChat}
         title="开启新对话"
-        message="这将清空当前输入与所有结果"
+        message="这将清空三个页面的输入与结果"
         confirmText="确认"
         cancelText="取消"
       />
     </div>
+  );
+}
+
+function App() {
+  return (
+    <ProfileProvider>
+      <Workspace />
+    </ProfileProvider>
   );
 }
 

@@ -5,6 +5,9 @@ export interface Message {
   timestamp: Date;
 }
 
+/** 页面入口：决定后端注入的提示词、任务计划与可用执行器 */
+export type PageKey = 'analyze' | 'generate' | 'interview';
+
 export interface UploadRequest {
   file: File;
   /** 用户补充要求（可选，作为润色附加指令） */
@@ -13,6 +16,10 @@ export interface UploadRequest {
   jd?: string;
   provider?: string;
   model?: string;
+  /** 快捷操作显式意图（可选）：interview-prep / resume-score / jd-keyword-match */
+  intent?: string;
+  /** 页面入口（analyze / generate / interview） */
+  page?: PageKey;
 }
 
 // ==================== 简历优化多 Agent 接口 ====================
@@ -25,6 +32,10 @@ export interface ResumeOptimizeRequest {
   provider?: string;
   /** 模型名称，不传用该提供者默认 */
   model?: string;
+  /** 快捷操作显式意图（可选）：interview-prep / resume-score / jd-keyword-match，不传走简历全流程优化 */
+  intent?: string;
+  /** 页面入口（analyze / generate / interview） */
+  page?: PageKey;
 }
 
 // ---- SSE 事件负载类型（后端字段宽松，前端按结构消费）----
@@ -60,9 +71,76 @@ export interface CondensedData {
   condensed_length?: number;
 }
 
+/** 导出结果：可直接打开/下载的地址 + 只读预览地址 */
+export interface ExportDocxResult {
+  url: string;
+  preview_url: string;
+  filename: string;
+  size: number;
+}
+
+// ---- 面试攻略（整体攻略 + 高频问题）----
+
+export interface InterviewStrategy {
+  /** 候选人整体画像与面试主攻方向 */
+  summary?: string;
+  /** 核心亮点 */
+  highlights?: string[];
+  /** 主要风险 / 短板 */
+  risks?: string[];
+  /** 备战建议 */
+  tips?: string[];
+}
+
+export interface InterviewQuestion {
+  question: string;
+  /** 所属考察维度 */
+  category?: string;
+  /** 考察点 */
+  assess_point?: string;
+  /** 答题要点 */
+  answer_points?: string[];
+  /** 可能追问 */
+  follow_up?: string;
+}
+
+export interface InterviewGuideData {
+  /** 目标岗位名称 */
+  position?: string;
+  /** llm（模型生成）| rule（规则兜底） */
+  source?: string;
+  strategy?: InterviewStrategy;
+  /** 最可能被问的问题（按可能性排序） */
+  questions?: InterviewQuestion[];
+}
+
+export interface InterviewData {
+  interview_guide?: InterviewGuideData;
+}
+
 export interface CompleteData {
   elapsed_seconds?: number;
   [key: string]: unknown;
+}
+
+/** 上传链路解析出的简历正文（回填三页共用的输入框） */
+export interface ParsedResumeData {
+  text?: string;
+}
+
+/** 简历与 JD 的匹配分析（有 JD 时才有实质内容） */
+export interface MatchAnalysis {
+  match_score?: number;
+  matched_keywords?: string[];
+  missing_keywords?: string[];
+  [key: string]: unknown;
+}
+
+export interface SuggestionItem {
+  priority?: number;
+  category?: string;
+  suggestion?: string;
+  example?: string;
 }
 
 export interface StepStartData {
@@ -82,6 +160,8 @@ export type ResumeEventType =
   | 'suggestions'
   | 'polished'
   | 'condensed'
+  | 'interview'
+  | 'resume_parsed'
   | 'complete'
   | 'error'
   | 'intent'

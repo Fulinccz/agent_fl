@@ -41,6 +41,11 @@ class KeywordMatcher:
             "parse", "extract", "analyze structure", "fields",
             "信息提取", "内容提取", "数据化", "PDF解析"
         ],
+        "interview-prep": [
+            "面试", "面试题", "面经", "面试官", "面试攻略",
+            "面试准备", "怎么准备面试", "会被问什么", "问什么",
+            "interview"
+        ],
         "chat-general": [
             "你好", "在吗", "你能", "有什么", "介绍", "功能",
             "help", "怎么用", "说明", "指南", "建议", "咨询",
@@ -53,6 +58,10 @@ class KeywordMatcher:
         "jd-keyword-match": ["JD匹配", "匹配JD", "岗位匹配", "简历匹配"],
         "resume-score": ["简历评分", "评分简历", "打分", "简历诊断"],
         "resume-parse": ["解析简历", "提取简历", "简历解析"],
+        "interview-prep": [
+            "面试攻略", "面试准备", "面试问题", "面试题库",
+            "面试技巧", "面经",
+        ],
     }
 
     def __init__(self, high_confidence_threshold: float = 0.9, min_confidence: float = 0.3):

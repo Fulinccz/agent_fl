@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { agentService } from '../services/agentService';
 import type {
   ResumeOptimizeRequest,
@@ -9,39 +9,39 @@ import type {
   PolishedData,
   CondensedData,
   CompleteData,
-  StepStartData,
-  StepResultData,
+  InterviewData,
+  InterviewGuideData,
+  ParsedResumeData,
 } from '../types';
-
-/** agent 名称 → pipeline 步骤 key */
-export const AGENT_TO_PIPELINE: Record<string, string> = {
-  resume_score: 'score',
-  jd_match: 'suggestions',
-  resume_condense: 'condense',
-  resume_polish: 'polished',
-};
 
 interface UseStreamResponseOptions {
   onScoreUpdate?: (score: ScoreData) => void;
   onSuggestionsUpdate?: (suggestions: SuggestionsData) => void;
   onPolishedUpdate?: (polished: PolishedData) => void;
   onStreamError?: (error: string) => void;
+  /** 上传链路解析出的简历正文：回填三页共用的输入框 */
+  onResumeParsed?: (text: string) => void;
 }
 
-interface UseStreamResponseReturn {
+export interface UseStreamResponseReturn {
   score: ScoreData | null;
   suggestions: SuggestionsData | null;
   polished: PolishedData | null;
   condensed: CondensedData | null;
+  /** 面试攻略（分维度题库，结构化卡片） */
+  interview: InterviewGuideData | null;
   error: string | null;
   isStreaming: boolean;
-  activeAgents: Set<string>;
+  /** 本次流式已用秒数（生成期间每秒刷新，结束后归零） */
+  liveSeconds: number;
   elapsed: number | null;
   /** ReAct 步内思考过程（thought 事件按序累积） */
   thoughts: string[];
   startStream: (request: ResumeOptimizeRequest, signal?: AbortSignal) => Promise<void>;
   startUpload: (request: UploadRequest, signal?: AbortSignal) => Promise<void>;
   clearOutput: () => void;
+  /** 手动关闭错误提示（不触发重新请求） */
+  clearError: () => void;
 }
 
 export function useStreamResponse(
@@ -51,9 +51,10 @@ export function useStreamResponse(
   const [suggestions, setSuggestions] = useState<SuggestionsData | null>(null);
   const [polished, setPolished] = useState<PolishedData | null>(null);
   const [condensed, setCondensed] = useState<CondensedData | null>(null);
+  const [interview, setInterview] = useState<InterviewGuideData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
-  const [activeAgents, setActiveAgents] = useState<Set<string>>(new Set());
+  const [liveSeconds, setLiveSeconds] = useState(0);
   const [elapsed, setElapsed] = useState<number | null>(null);
   const [thoughts, setThoughts] = useState<string[]>([]);
   const thoughtsRef = useRef<string[]>([]);
@@ -62,13 +63,24 @@ export function useStreamResponse(
   const suggestionsRef = useRef<SuggestionsData | null>(null);
   const polishedRef = useRef<PolishedData | null>(null);
   const condensedRef = useRef<CondensedData | null>(null);
+  const interviewRef = useRef<InterviewGuideData | null>(null);
   const lastPolishTs = useRef(0);
-  const activeAgentsRef = useRef<Set<string>>(new Set());
 
   // options 每次渲染可能是新字面量，用 ref 持有最新值，
   // 使下方回调 identity 稳定（避免依赖 [options] 导致每渲染重建）
   const optionsRef = useRef(options);
   optionsRef.current = options;
+
+  // 生成期间每秒刷新已用秒数：本地模型一次推理 1-3 分钟，
+  // 有计时器用户才不会误以为页面卡死。归零在 runStream 里做（避免 effect 内同步 setState）。
+  useEffect(() => {
+    if (!isStreaming) return;
+    const startAt = Date.now();
+    const timer = window.setInterval(() => {
+      setLiveSeconds(Math.floor((Date.now() - startAt) / 1000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [isStreaming]);
 
   /** 统一事件分发：粘贴 / 上传两条链路共用 */
   const handleEvent = useCallback((event: ResumeOptimizeEvent) => {
@@ -117,6 +129,21 @@ export function useStreamResponse(
         setCondensed(data);
         break;
       }
+      case 'interview': {
+        const data = (event.data || {}) as InterviewData;
+        const guide = data.interview_guide || null;
+        if (guide) {
+          interviewRef.current = guide;
+          setInterview(guide);
+        }
+        break;
+      }
+      case 'resume_parsed': {
+        const data = (event.data || {}) as ParsedResumeData;
+        const text = (data.text || '').trim();
+        if (text) opts.onResumeParsed?.(text);
+        break;
+      }
       case 'complete': {
         const data = event.data as CompleteData | undefined;
         if (data?.elapsed_seconds != null) {
@@ -140,27 +167,8 @@ export function useStreamResponse(
         opts.onStreamError?.(msg);
         break;
       }
-      case 'step_start': {
-        const data = event.data as StepStartData;
-        if (data.agent) {
-          const next = new Set([...activeAgentsRef.current, data.agent]);
-          activeAgentsRef.current = next;
-          setActiveAgents(next);
-        }
-        break;
-      }
-      case 'step_result': {
-        const data = event.data as StepResultData;
-        if (data.agent) {
-          const next = new Set(activeAgentsRef.current);
-          next.delete(data.agent);
-          activeAgentsRef.current = next;
-          setActiveAgents(next);
-        }
-        break;
-      }
       default:
-        // intent / plan / reflection 等过程事件：当前 UI 不消费
+        // intent / plan / step / reflection 等过程事件：当前 UI 不消费
         break;
     }
   }, []);
@@ -170,15 +178,15 @@ export function useStreamResponse(
     setSuggestions(null);
     setPolished(null);
     setCondensed(null);
+    setInterview(null);
     setError(null);
     setElapsed(null);
-    setActiveAgents(new Set());
     setThoughts([]);
     scoreRef.current = null;
     suggestionsRef.current = null;
     polishedRef.current = null;
     condensedRef.current = null;
-    activeAgentsRef.current = new Set();
+    interviewRef.current = null;
     thoughtsRef.current = [];
   }, []);
 
@@ -186,6 +194,7 @@ export function useStreamResponse(
     starter: (onEvent: (event: ResumeOptimizeEvent) => void) => Promise<void>
   ) => {
     resetOutput();
+    setLiveSeconds(0);
     setIsStreaming(true);
     try {
       await starter(handleEvent);
@@ -195,8 +204,6 @@ export function useStreamResponse(
       optionsRef.current.onStreamError?.(msg);
     } finally {
       setIsStreaming(false);
-      setActiveAgents(new Set());
-      activeAgentsRef.current = new Set();
     }
   }, [handleEvent, resetOutput]);
 
@@ -219,19 +226,23 @@ export function useStreamResponse(
     setIsStreaming(false);
   }, [resetOutput]);
 
+  const clearError = useCallback(() => setError(null), []);
+
   return {
     score,
     suggestions,
     polished,
     condensed,
+    interview,
     error,
     isStreaming,
-    activeAgents,
+    liveSeconds,
     elapsed,
     thoughts,
     startStream,
     startUpload,
     clearOutput,
+    clearError,
   };
 }
 

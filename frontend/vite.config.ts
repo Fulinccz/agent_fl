@@ -16,8 +16,10 @@ export default defineConfig({
         target: 'http://localhost:8080',
         changeOrigin: true,
         secure: false,
-        timeout: 300000,
-        proxyTimeout: 300000,
+        // 本地 GGUF 推理慢：面试攻略全量生成单次可达 5 分钟以上，
+        // 代理超时必须留足余量，否则 SSE 会在生成完成前被截断
+        timeout: 900000,
+        proxyTimeout: 900000,
       },
     },
   },

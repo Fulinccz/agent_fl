@@ -102,9 +102,11 @@ func TestAPIRoutes_ForwardToUpstream(t *testing.T) {
 		{"GET", "/api/chat/sessions/session-123/history"},
 		{"DELETE", "/api/chat/sessions/session-456"},
 		{"DELETE", "/api/chat/sessions/session-789/clear"},
-		// 简历（含旧网关 404 的导出端点）
+		// 简历（导出 + 导出文件的下载/只读预览地址）
 		{"POST", "/api/resume/optimize/stream"},
-		{"POST", "/api/resume/export-docx"},
+		{"POST", "/api/resume/export"},
+		{"GET", "/api/resume/exports/token123"},
+		{"GET", "/api/resume/exports/token123/preview"},
 		// 文件上传流式
 		{"POST", "/api/agent/upload_stream"},
 		// 技能

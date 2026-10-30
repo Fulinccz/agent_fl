@@ -42,6 +42,10 @@ _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 _SERVER_HOST = "127.0.0.1"
 _SERVER_PORT = 8091
 _HEALTH_TIMEOUT_S = 120  # 首次加载模型到 RAM 需要数十秒
+# 并行槽位：多个请求同时解码时 llama.cpp 按批处理，权重每步只读一遍，
+# CPU 上实测总吞吐约为串行的 1.7 倍（面试攻略 3 个维度并发出题依赖它）
+_SERVER_SLOTS = 3
+_SERVER_CTX = 12288  # 12288/3 = 4096/槽位，与改造前单槽上下文持平（长简历不截断）
 
 # 进程级单例：避免多个 Provider 实例重复拉起 server
 _server_lock = threading.Lock()
@@ -86,7 +90,7 @@ def _wait_health(timeout_s: float) -> bool:
     return False
 
 
-def _ensure_server(model_path: str, n_ctx: int = 4096) -> None:
+def _ensure_server(model_path: str, n_ctx: int = _SERVER_CTX) -> None:
     """确保 llama-server 已运行并加载了目标模型（进程级单例）"""
     global _server_proc
     with _server_lock:
@@ -107,6 +111,7 @@ def _ensure_server(model_path: str, n_ctx: int = 4096) -> None:
             "--port", str(_SERVER_PORT),
             "-c", str(n_ctx),
             "-t", str(threads),
+            "--parallel", str(_SERVER_SLOTS),
             "--jinja",
             "--no-webui",
         ]

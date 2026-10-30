@@ -3,6 +3,7 @@ import type {
   ResumeOptimizeRequest,
   UploadRequest,
   ResumeOptimizeEvent,
+  ExportDocxResult,
 } from '../types';
 
 /**
@@ -37,7 +38,7 @@ class AgentService {
    * @param text 优化后的简历文本
    * @param file 用户上传的原始 docx（可选，有则按对齐改写路径）
    */
-  async exportDocx(text: string, file?: File | null): Promise<{ blob: Blob; filename: string }> {
+  async exportDocx(text: string, file?: File | null): Promise<ExportDocxResult> {
     return resumeOptimizeApiClient.exportDocx(text, file);
   }
 }

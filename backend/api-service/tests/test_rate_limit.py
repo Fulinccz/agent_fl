@@ -45,19 +45,19 @@ def test_ips_isolated():
 
 
 def test_paths_isolated():
-    req = _make_request(path="/api/resume/export-docx")
+    req = _make_request(path="/api/resume/export")
     # stream 端点 10 次不影响 export 端点独立计数
     for _ in range(10):
         check_rate_limit(req, "/api/resume/optimize/stream")
-    allowed, _, _ = check_rate_limit(req, "/api/resume/export-docx")
+    allowed, _, _ = check_rate_limit(req, "/api/resume/export")
     assert allowed
 
 
 def test_export_limit_is_20():
-    req = _make_request(path="/api/resume/export-docx")
+    req = _make_request(path="/api/resume/export")
     for _ in range(20):
-        assert check_rate_limit(req, "/api/resume/export-docx")[0]
-    assert not check_rate_limit(req, "/api/resume/export-docx")[0]
+        assert check_rate_limit(req, "/api/resume/export")[0]
+    assert not check_rate_limit(req, "/api/resume/export")[0]
 
 
 def test_window_expiry_allows_again(monkeypatch):

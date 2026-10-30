@@ -34,6 +34,8 @@ class JDMatchExecutor(BaseExecutor):
             state = {
                 "resume": task_input["resume"],
                 "jd": task_input.get("jd"),
+                # 页面入口的场景指令（分析/生成/面试各有不同要求）
+                "directive": task_input.get("directive"),
                 "score_result": task_input.get("score_result") or {
                     "completeness": 70, "professionalism": 70,
                     "quantification": 60, "matching": 70,

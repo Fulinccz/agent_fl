@@ -2,7 +2,6 @@ import { useState, useCallback } from 'react';
 
 interface UseFileUploadReturn {
   uploadedFile: File | null;
-  fileName: string;
   handleFileSelect: (event: React.ChangeEvent<HTMLInputElement>) => void;
   clearFile: () => void;
 }
@@ -17,7 +16,7 @@ export function useFileUpload(): UseFileUploadReturn {
   const handleFileSelect = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files[0]) {
       const file = event.target.files[0];
-      const validTypes = ['.pdf', '.doc', '.docx', '.txt', '.png', '.jpg', '.jpeg', '.bmp', '.webp', '.mp3', '.wav', '.m4a', '.flac', '.ogg'];
+      const validTypes = ['.pdf', '.doc', '.docx', '.txt', '.png', '.jpg', '.jpeg', '.bmp', '.webp', '.mp3', '.wav', '.m4a', '.flac', '.ogg', '.webm'];
       const fileExtension = '.' + file.name.split('.').pop()?.toLowerCase();
 
       if (!validTypes.includes(fileExtension)) {
@@ -27,6 +26,8 @@ export function useFileUpload(): UseFileUploadReturn {
       }
 
       setUploadedFile(file);
+      // 清空 input 的 value，允许再次选择同一个文件
+      event.target.value = '';
     }
   }, []);
 
@@ -36,7 +37,6 @@ export function useFileUpload(): UseFileUploadReturn {
 
   return {
     uploadedFile,
-    fileName: uploadedFile?.name || '',
     handleFileSelect,
     clearFile
   };

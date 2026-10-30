@@ -91,11 +91,16 @@ class TestUploadMasStream:
             jd="高级Java工程师",
             provider="deepseek",
             model=None,
+            page="",
+            intent="",
         )
 
         assert response.status_code == 200
         events = [json.loads(line) async for line in response.body_iterator]
-        assert events[0]["type"] == "score"
+        # 首个事件把解析出的简历回填前端（三页共用输入框），随后进入 MAS 流水线
+        assert events[0]["type"] == "resume_parsed"
+        assert events[0]["data"]["text"].startswith("张三")
+        assert events[1]["type"] == "score"
         assert events[-1]["type"] == "complete"
 
         # MAS 以预置简历意图调用，user_input 为空、简历走 context
@@ -131,6 +136,8 @@ class TestUploadMasStream:
             jd=None,
             provider="local",
             model=None,
+            page="",
+            intent="",
         )
         assert response.status_code == 200
         # 消费完
@@ -150,6 +157,7 @@ class TestUploadMasStream:
             jd=None,
             provider="local",
             model=None,
+            page="",
         )
         assert response.status_code == 400
 
@@ -167,6 +175,7 @@ class TestUploadMasStream:
             jd=None,
             provider="local",
             model=None,
+            page="",
         )
         assert response.status_code == 422
         # 失败路径也清理了临时文件
@@ -187,6 +196,7 @@ class TestUploadMasStream:
             jd=None,
             provider="local",
             model=None,
+            page="",
         )
         assert response.status_code == 400
         assert "tesseract" in response.body.decode("utf-8")

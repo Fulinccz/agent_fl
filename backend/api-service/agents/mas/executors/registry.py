@@ -7,6 +7,7 @@ from logger import get_logger
 from .base import BaseExecutor
 from .resume_score import ResumeScoreExecutor
 from .jd_match import JDMatchExecutor
+from .interview import InterviewPrepExecutor
 from .resume_polish import ResumePolishExecutor
 from .resume_parse import ResumeParseExecutor
 from .resume_condense import ResumeCondenseExecutor
@@ -27,6 +28,7 @@ class ExecutorRegistry:
         for executor in (
             ResumeScoreExecutor(llm=self._llm),
             JDMatchExecutor(llm=self._llm),
+            InterviewPrepExecutor(llm=self._llm),
             ResumePolishExecutor(llm=self._llm),
             ResumeCondenseExecutor(llm=self._llm),
             ResumeParseExecutor(),

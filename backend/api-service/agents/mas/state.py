@@ -10,10 +10,12 @@ from typing import Any, Dict, List, Optional
 
 # ============ 意图名称常量 ============
 INTENT_RESUME_OPTIMIZE = "resume-optimize"     # 简历全流程优化（复杂，需规划）
+INTENT_RESUME_ANALYZE = "resume-analyze"       # 简历分析（评分 + JD 匹配，只诊断不改写）
 INTENT_RESUME_SCORE = "resume-score"           # 简历评分
 INTENT_RESUME_POLISH = "resume-polishing"      # 简历润色
 INTENT_JD_MATCH = "jd-keyword-match"           # JD 匹配分析
 INTENT_RESUME_PARSE = "resume-parse"           # 简历解析
+INTENT_INTERVIEW_PREP = "interview-prep"       # 面试攻略（分维度题库）
 INTENT_CHAT_GENERAL = "chat-general"           # 通用对话
 INTENT_COMPLEX_TASK = "complex-task"           # 复合任务（LLM 分解规划）
 

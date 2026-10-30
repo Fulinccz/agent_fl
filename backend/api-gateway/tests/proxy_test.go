@@ -70,7 +70,7 @@ func TestReverseProxy_ForwardsPathQueryHeadersBody(t *testing.T) {
 
 	gw := startProxyServer(t, upstream.URL)
 
-	req, _ := http.NewRequest("POST", gw.URL+"/api/resume/export-docx?format=docx", strings.NewReader("hello-body"))
+	req, _ := http.NewRequest("POST", gw.URL+"/api/resume/export?format=docx", strings.NewReader("hello-body"))
 	req.Header.Set("Authorization", "Bearer token123")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -85,7 +85,7 @@ func TestReverseProxy_ForwardsPathQueryHeadersBody(t *testing.T) {
 	if gotMethod != "POST" {
 		t.Errorf("method: got %s, want POST", gotMethod)
 	}
-	if gotPath != "/api/resume/export-docx" {
+	if gotPath != "/api/resume/export" {
 		t.Errorf("path: got %s", gotPath)
 	}
 	if gotQuery != "format=docx" {

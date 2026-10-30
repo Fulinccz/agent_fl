@@ -18,7 +18,7 @@ LIMITS: dict[str, tuple[int, int]] = {
     "/api/resume/optimize/stream": DEFAULT_LIMIT,
     "/api/agent/upload_stream": DEFAULT_LIMIT,
     "/api/transcribe": DEFAULT_LIMIT,
-    "/api/resume/export-docx": (20, 60),
+    "/api/resume/export": (20, 60),
 }
 
 # 全局兜底（所有端点共用一套宽松配额；与端点级严格限制分桶计数，互不叠加）

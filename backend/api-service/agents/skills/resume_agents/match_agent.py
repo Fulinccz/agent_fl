@@ -43,8 +43,11 @@ class JDMatchAgent:
             return state
 
         try:
+            # 页面入口指令：分析页以招聘顾问视角诊断差距
+            directive = str(state.get("directive") or "").strip()
+            directive_block = f"\n【本次入口要求】{directive}\n" if directive else ""
             prompt = f"""分析简历与 JD 的匹配度，提供优化建议。
-
+{directive_block}
 【JD】
 {jd[:1500]}
 

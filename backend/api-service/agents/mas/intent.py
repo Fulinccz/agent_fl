@@ -42,6 +42,7 @@ _SIMPLE_SKILL_AGENTS: Dict[str, str] = {
     "resume-polishing": "resume_polish",
     "jd-keyword-match": "jd_match",
     "resume-parse": "resume_parse",
+    "interview-prep": "interview_prep",
 }
 
 

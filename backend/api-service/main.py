@@ -169,7 +169,11 @@ app.add_middleware(
 async def security_headers_middleware(request: Request, call_next):
     """安全响应头中间件"""
     response = await call_next(request)
-    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    path = request.url.path
+    # 简历只读预览页要嵌在前端 sandbox iframe 里：沙箱文档是不透明源，
+    # 带 SAMEORIGIN 会被浏览器判定为跨源而拒绝渲染，故该路径不下发。
+    if not (path.startswith("/api/resume/exports/") and path.endswith("/preview")):
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"

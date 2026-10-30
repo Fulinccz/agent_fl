@@ -4,7 +4,8 @@
 - 用户上传过 docx：复制原文件，按内容对齐替换改写（保留图标/图片/表格/页面设置等全部格式）
 - 无上传或非 docx：走 ResumeDocxSkill 模板重新排版生成
 
-导出文件写入系统临时目录，由路由在响应发送后删除。
+导出文件写入导出目录，由路由登记 token 后通过 URL 复用（含只读预览），
+源文件（用户上传的临时副本）在生成完成后即刻删除。
 """
 from __future__ import annotations
 
@@ -28,6 +29,7 @@ class DocxExportResult:
     path: str
     filename: str
     mode: str  # "rewrite"（原文件改写） / "template"（模板生成）
+    size: int = 0
 
 
 def _sanitize_base(name: str | None) -> str | None:
@@ -87,14 +89,20 @@ def generate_resume_docx(text: str, source_path: str | None = None,
         try:
             _rewrite_docx_aligned(source_path, text, out_path)
             logger.info(f"[resume_document] 原文件改写完成: {filename}")
-            return DocxExportResult(path=out_path, filename=filename, mode="rewrite")
+            return DocxExportResult(
+                path=out_path, filename=filename, mode="rewrite",
+                size=os.path.getsize(out_path),
+            )
         except Exception as e:
             logger.warning(f"[resume_document] 原文件改写失败，回退模板生成: {e}")
 
     from agents.skills.doc_generation import ResumeDocxSkill
     ResumeDocxSkill().generate(text, out_path)
     logger.info(f"[resume_document] 模板生成完成: {filename}")
-    return DocxExportResult(path=out_path, filename=filename, mode="template")
+    return DocxExportResult(
+        path=out_path, filename=filename, mode="template",
+        size=os.path.getsize(out_path),
+    )
 
 
 # ---------- 对齐替换改写 ----------
@@ -193,3 +201,78 @@ def _insert_after(anchor_para, lines: list[str], doc):
         else:
             para = doc.add_paragraph(line)
             ref = para
+
+
+# ---------- 只读预览 ----------
+
+_PREVIEW_CSS = """
+* { box-sizing: border-box; }
+body { margin: 0; padding: 24px; background: #f3f4f6; color: #1f2430;
+  font-family: "Microsoft YaHei", "PingFang SC", -apple-system, sans-serif; }
+.resume-paper { max-width: 760px; margin: 0 auto; background: #fff; padding: 34px 42px;
+  border-radius: 6px; box-shadow: 0 2px 12px rgba(15, 23, 42, 0.08); }
+h2 { font-size: 15px; margin: 18px 0 8px; padding-bottom: 4px;
+  border-bottom: 1px solid #e5e7eb; }
+p { margin: 5px 0; font-size: 13px; line-height: 1.75;
+  white-space: pre-wrap; word-break: break-word; }
+p.bullet { padding-left: 16px; }
+table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 12.5px; }
+td { border: 1px solid #e5e7eb; padding: 5px 8px; vertical-align: top; }
+.empty { color: #9ca3af; text-align: center; padding: 40px 0; }
+"""
+
+
+def render_docx_preview_html(path: str) -> str:
+    """把 docx 渲染为只读 HTML 预览（段落 / 标题 / 表格 / 图标行文本）
+
+    只做服务端渲染，前端以 sandbox iframe 展示，不提供任何编辑入口。
+    """
+    from html import escape
+
+    from docx import Document
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    doc = Document(path)
+    blocks: list[str] = []
+    for child in doc.element.body.iterchildren():
+        tag = child.tag.rsplit("}", 1)[-1]
+        if tag == "p":
+            para = Paragraph(child, doc)
+            text = para.text.strip()
+            if not text:
+                continue
+            if _is_heading(para):
+                blocks.append(f"<h2>{escape(text)}</h2>")
+            else:
+                cls = ' class="bullet"' if text.startswith(("•", "-", "·")) else ""
+                blocks.append(f"<p{cls}>{escape(text)}</p>")
+        elif tag == "tbl":
+            blocks.extend(_render_table_html(Table(child, doc), escape))
+
+    inner = "\n".join(blocks) or '<p class="empty">（文档内容为空）</p>'
+    return (
+        '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f"<title>简历预览</title><style>{_PREVIEW_CSS}</style></head>"
+        f'<body><div class="resume-paper">{inner}</div></body></html>'
+    )
+
+
+def _is_heading(para) -> bool:
+    """按段落样式判断是否标题（样式名缺失时按正文处理）"""
+    try:
+        name = para.style.name or ""
+    except Exception:
+        return False
+    return "Heading" in name or "标题" in name
+
+
+def _render_table_html(table, escape) -> list[str]:
+    rows: list[str] = []
+    for row in table.rows:
+        cells = "".join(f"<td>{escape(c.text.strip())}</td>" for c in row.cells)
+        rows.append(f"<tr>{cells}</tr>")
+    if not rows:
+        return []
+    return [f'<table>{"".join(rows)}</table>']

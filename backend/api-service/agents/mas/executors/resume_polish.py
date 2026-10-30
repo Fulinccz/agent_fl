@@ -39,6 +39,8 @@ class ResumePolishExecutor(BaseExecutor):
                 "jd": task_input.get("jd"),
                 # 上传链路用户的补充要求
                 "extra_instruction": task_input.get("extra_instruction"),
+                # 页面入口的场景指令（生成页：直接出成品简历）
+                "directive": task_input.get("directive"),
                 "score_result": None,
                 "match_result": None,
                 "suggestions": None,
@@ -82,6 +84,8 @@ class ResumePolishExecutor(BaseExecutor):
                 "jd": task_input.get("jd"),
                 # 上传链路用户的补充要求
                 "extra_instruction": task_input.get("extra_instruction"),
+                # 页面入口的场景指令（生成页：直接出成品简历）
+                "directive": task_input.get("directive"),
                 "score_result": None,
                 "match_result": None,
                 "suggestions": None,

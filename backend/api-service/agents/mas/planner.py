@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from logger import get_logger
 from services.tracing import start_span, update_observation
+from services.page_profiles import PageProfile, get_page_profile
 from agents.llm import get_shared_llm
 from agents.skills.resume_agents.condense_agent import should_condense
 from .state import (
@@ -21,6 +22,7 @@ from .state import (
     INTENT_RESUME_SCORE,
     INTENT_RESUME_POLISH,
     INTENT_JD_MATCH,
+    INTENT_INTERVIEW_PREP,
     INTENT_RESUME_PARSE,
     INTENT_COMPLEX_TASK,
 )
@@ -52,9 +54,14 @@ class MasterAgent:
     ) -> TaskPlan:
         """产出任务计划
 
-        简单意图，以及简历优化等自带确定性模板的复杂意图 → 模板（零 LLM 开销）
-        通用复合任务（complex-task，无确定性模板）→ 先 LLM 分解，失败再回退模板
+        带页面入口（context.page）→ 按页面档案出计划（分析/生成/面试各自一套）；
+        简单意图，以及简历优化等自带确定性模板的复杂意图 → 模板（零 LLM 开销）；
+        通用复合任务（complex-task，无确定性模板）→ 先 LLM 分解，失败再回退模板。
         """
+        profile = get_page_profile((context or {}).get("page"))
+        if profile is not None:
+            return self._profile_plan(profile, user_input, context)
+
         if intent.is_complex and intent.name == INTENT_COMPLEX_TASK:
             # 通用复合任务无确定性模板：先 LLM 分解，失败再回退到意图模板
             plan = self._llm_plan(user_input, intent, context)
@@ -72,6 +79,7 @@ class MasterAgent:
         failed_step_id: str,
         error: str,
         feedback: str,
+        allowed_agents: Optional[frozenset[str]] = None,
     ) -> Optional[TaskPlan]:
         """重新规划剩余步骤；LLM 不可用时返回 None（由编排器降级处理）"""
         if self._llm is None:
@@ -92,7 +100,7 @@ class MasterAgent:
 
         try:
             raw = self._llm.generate(prompt, deepThinking=False, max_new_tokens=256)
-            steps = self._parse_steps(raw, require_list=True)
+            steps = self._parse_steps(raw, require_list=True, allowed=allowed_agents)
             if not steps:
                 return None
             logger.info(f"[MasterAgent] 重规划产出 {len(steps)} 个剩余步骤")
@@ -102,6 +110,52 @@ class MasterAgent:
             return None
 
     # ---------- 模板计划 ----------
+
+    def _profile_plan(self, profile: PageProfile, user_input: str,
+                      context: Optional[Dict[str, Any]] = None) -> TaskPlan:
+        """按页面档案生成计划：步骤来自档案，JD 缺失时跳过依赖 JD 的步骤"""
+        context = context or {}
+        resume = str(context.get("resume") or user_input or "")
+        has_jd = bool(str(context.get("jd") or "").strip())
+
+        steps: List[TaskStep] = []
+        for spec in profile.steps:
+            if spec.requires_jd and not has_jd:
+                continue
+            if (
+                spec.agent == "resume_polish"
+                and "resume_condense" in profile.agents
+                and should_condense(resume)
+                and not any(s.agent == "resume_condense" for s in steps)
+            ):
+                logger.info(f"[MasterAgent] 简历超长（{len(resume)} 字），插入精简步骤")
+                steps.append(TaskStep(
+                    step_id=f"step_{len(steps) + 1}", agent="resume_condense",
+                    task="精简过长简历，压缩至约60%篇幅", depends_on=[],
+                ))
+
+            # 流式产出步骤（润色）依赖前面所有步骤，其余步骤可并行
+            depends = [s.step_id for s in steps] if spec.agent == "resume_polish" else []
+            steps.append(TaskStep(
+                step_id=f"step_{len(steps) + 1}",
+                agent=spec.agent,
+                task=spec.task,
+                depends_on=depends,
+            ))
+
+        if not steps:
+            return self._template_plan(profile.intent, user_input, context)
+
+        logger.info(
+            f"[MasterAgent] 页面计划: page={profile.key}, "
+            f"steps={[s.agent for s in steps]}"
+        )
+        return TaskPlan(
+            goal=profile.intent,
+            intent=profile.intent,
+            steps=steps,
+            source="template",
+        )
 
     def _template_plan(self, intent_name: str, user_input: str,
                        context: Optional[Dict[str, Any]] = None) -> TaskPlan:
@@ -139,6 +193,10 @@ class MasterAgent:
         elif intent_name == INTENT_RESUME_PARSE:
             steps = [TaskStep(step_id="step_1", agent="resume_parse",
                               task="解析简历文件提取结构化信息", depends_on=[])]
+        elif intent_name == INTENT_INTERVIEW_PREP:
+            steps = [TaskStep(step_id="step_1", agent="interview_prep",
+                              task="分析简历与目标岗位，生成分维度面试题库与答题要点",
+                              depends_on=[])]
         else:  # 通用对话
             steps = [TaskStep(step_id="step_1", agent="chat",
                               task="回答用户问题", depends_on=[])]
@@ -199,7 +257,12 @@ class MasterAgent:
             logger.warning(f"[MasterAgent] LLM 计划失败: {e}")
             return None
 
-    def _parse_steps(self, raw: str, require_list: bool = False) -> Optional[List[TaskStep]]:
+    def _parse_steps(
+        self,
+        raw: str,
+        require_list: bool = False,
+        allowed: Optional[frozenset[str]] = None,
+    ) -> Optional[List[TaskStep]]:
         """从 LLM 输出中解析步骤列表，并校验执行器合法性"""
         from services.json_utils import extract_json_object
         json_str = extract_json_object(raw)
@@ -222,7 +285,7 @@ class MasterAgent:
             if not isinstance(item, dict):
                 continue
             agent = str(item.get("agent", "")).strip()
-            if not self._is_valid_agent(agent):
+            if not self._is_valid_agent(agent, allowed):
                 logger.warning(f"[MasterAgent] LLM 规划了未知执行器 '{agent}'，丢弃该步骤")
                 continue
 
@@ -253,11 +316,16 @@ class MasterAgent:
 
         return steps or None
 
-    def _is_valid_agent(self, agent: str) -> bool:
+    def _is_valid_agent(
+        self, agent: str, allowed: Optional[frozenset[str]] = None
+    ) -> bool:
+        # 页面入口：只允许该页面档案声明的执行器
+        if allowed is not None:
+            return agent in allowed
         if not self.executor_catalog:
             # 无目录时仅放行内置执行器
             return agent in {
                 "resume_score", "jd_match", "resume_condense",
-                "resume_polish", "resume_parse", "chat",
+                "resume_polish", "resume_parse", "interview_prep", "chat",
             }
         return f"- {agent}:" in self.executor_catalog

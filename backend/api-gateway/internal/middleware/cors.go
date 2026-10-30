@@ -32,19 +32,31 @@ func CORS() gin.HandlerFunc {
 // SecurityHeaders 安全响应头中间件
 func SecurityHeaders() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 防止点击劫持
-		c.Header("X-Frame-Options", "DENY")
+		// 简历只读预览页需要被前端沙箱 iframe 内嵌，故不下发防嵌套与全局 CSP；
+		// 该页面的防脚本策略由 api-service 自行下发（default-src 'none'）。
+		embeddable := isEmbeddablePreview(c.Request.URL.Path)
+		if !embeddable {
+			// 防止点击劫持
+			c.Header("X-Frame-Options", "DENY")
+		}
 		// 防止 MIME 嗅探
 		c.Header("X-Content-Type-Options", "nosniff")
 		// XSS 保护
 		c.Header("X-XSS-Protection", "1; mode=block")
 		// 强制 HTTPS（生产环境）
 		c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
-		// CSP 内容安全策略
-		c.Header("Content-Security-Policy", "default-src 'self'")
+		if !embeddable {
+			// CSP 内容安全策略
+			c.Header("Content-Security-Policy", "default-src 'self'")
+		}
 		// 限制 referrer 泄露
 		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
 
 		c.Next()
 	}
+}
+
+// isEmbeddablePreview 判断是否为可被前端 iframe 内嵌的简历只读预览页
+func isEmbeddablePreview(path string) bool {
+	return strings.HasPrefix(path, "/api/resume/exports/") && strings.HasSuffix(path, "/preview")
 }
