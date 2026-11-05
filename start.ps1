@@ -1,4 +1,4 @@
-# FulinAI 一键启动（Windows PowerShell）
+﻿﻿# FulinAI 一键启动（Windows PowerShell）
 # 用法：右键"使用 PowerShell 运行"，或在仓库根目录执行：powershell -File .\start.ps1
 # 启动内容：MySQL + Redis（Docker）→ AI Service(:8000) → Gateway(:8080) → Frontend(:5173)
 # Langfuse 观测栈默认不启动（省 2-3GB 内存）：需要时单独执行 powershell -File .\scripts\langfuse.ps1 start

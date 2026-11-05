@@ -1,4 +1,4 @@
-﻿# Langfuse 观测栈独立启停（默认不随 start.ps1 启动，避免常驻 2-3GB 内存）
+﻿﻿﻿﻿# Langfuse 观测栈独立启停（默认不随 start.ps1 启动，避免常驻 2-3GB 内存）
 # 用法：powershell -File .\scripts\langfuse.ps1 start|stop|status
 # tracing 未配置/不可用时后端自动降级为 no-op，主链路（简历优化）不受影响
 param(
